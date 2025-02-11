@@ -1,0 +1,15 @@
+   {
+     "version": 2,
+     "builds": [
+       {
+         "src": "dir/coder.py",
+         "use": "@vercel/python"
+       }
+     ],
+     "routes": [
+       {
+         "src": "/api/chatbot",
+         "dest": "dir/coder.py"
+       }
+     ]
+   }
