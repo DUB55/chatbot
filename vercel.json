@@ -4,12 +4,20 @@
        {
          "src": "dir/coder.py",
          "use": "@vercel/python"
+       },
+       {
+         "src": "chatbot.html",
+         "use": "@vercel/static"
        }
      ],
      "routes": [
        {
          "src": "/api/chatbot",
          "dest": "dir/coder.py"
+       },
+       {
+         "src": "/chatbot.html",
+         "dest": "chatbot.html"
        }
      ]
    }
