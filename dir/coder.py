@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from g4f.client import Client
+from pydantic import BaseModel
 
 # Create FastAPI instance
 app = FastAPI()
@@ -16,11 +17,15 @@ app.add_middleware(
 
 client = Client()
 
+# Define a Pydantic model for the request body
+class UserInput(BaseModel):
+    input: str
+
 @app.post("/api/chatbot")
-async def chatbot_response(user_input: str):
+async def chatbot_response(user_input: UserInput):
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[{"role": "user", "content": user_input}],
+        messages=[{"role": "user", "content": user_input.input}],  # Access the input from the model
         web_search=False
     )
     return {"output": response.choices[0].message.content}  # Return response in JSON format
