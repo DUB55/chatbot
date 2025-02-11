@@ -66,9 +66,12 @@ async def chatbot_response(user_input: UserInput):
     # Append the user input to chat history
     chat_history.append({"role": "user", "content": user_input.input})
 
+    # Prepare messages for the assistant, including the entire chat history
+    messages = [{"role": entry["role"], "content": entry["content"]} for entry in chat_history]
+
     response = client.chat.completions.create(
         model="gpt-4",
-        messages=[{"role": "user", "content": user_input.input}],
+        messages=messages,  # Include the entire chat history
         web_search=False
     )
     
