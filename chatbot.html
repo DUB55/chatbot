@@ -628,10 +628,6 @@
         margin: 1rem 0;
         display: flex;
         justify-content: center;
-        position: absolute;
-        top: 150px;
-        left: 50%;
-        transform: translateX(-50%);
         z-index: 2;
       }
 
@@ -779,12 +775,12 @@
       <header class="header">
         <h1>DUB5</h1>
         <h1>AI Assistant</h1>
+        <div class="foreground-stars" id="foregroundStarsContainer">
+          ★★★★★
+        </div>
         <h2>Chat:</h2>
       </header>
       
-      <div class="foreground-stars" id="foregroundStarsContainer">
-        ★★★★★
-      </div>
 
       <main class="chat-container">
         <textarea 
