@@ -112,6 +112,41 @@
         cursor: not-allowed;
       }
 
+      .style-section {
+        margin-bottom: 1rem;
+      }
+
+      .style-section h3 {
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+        color: rgb(224, 242, 254);
+      }
+
+      .style-buttons {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .style-button {
+        padding: 0.5rem 1rem;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 0.5rem;
+        color: white;
+        cursor: pointer;
+        transition: all 0.3s ease;
+      }
+
+      .style-button.active {
+        background: rgba(255, 255, 255, 0.3);
+        border-color: rgba(255, 255, 255, 0.4);
+      }
+
+      .style-button:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
       .response-container {
         margin-top: 1.5rem;
         opacity: 0;
@@ -237,6 +272,18 @@
       </div>
 
       <div class="image-container">
+        <div class="style-section">
+          <h3>Choose a style:</h3>
+          <div class="style-buttons">
+            <button class="style-button" onclick="setStyle('realistic')">Realistic</button>
+            <button class="style-button" onclick="setStyle('cartoon')">Cartoon</button>
+            <button class="style-button" onclick="setStyle('3d')">3D</button>
+            <button class="style-button" onclick="setStyle('anime')">Anime</button>
+            <button class="style-button" onclick="setStyle('watercolor')">Watercolor</button>
+            <button class="style-button" onclick="setStyle('oil-painting')">Oil Painting</button>
+          </div>
+        </div>
+
         <textarea 
           id="userInput" 
           class="textarea" 
@@ -266,7 +313,26 @@
     <script>
       // Configuration
       const added_blur = true;  // Set to false to disable blur effect
+      let selectedStyle = '';  // Store the selected style
       
+      // Style configurations
+      const styles = {
+        'realistic': 'Generate a photorealistic image with high detail and natural lighting',
+        'cartoon': 'Generate in a cartoon art style with bold lines and vibrant colors',
+        '3d': 'Generate in 3D rendered style with depth and volumetric lighting',
+        'anime': 'Generate in Japanese anime art style',
+        'watercolor': 'Generate in watercolor painting style with soft edges and paint texture',
+        'oil-painting': 'Generate in classical oil painting style with rich textures'
+      };
+
+      function setStyle(style) {
+        // Remove active class from all buttons
+        document.querySelectorAll('.style-button').forEach(btn => btn.classList.remove('active'));
+        // Add active class to selected button
+        document.querySelector(`.style-button[onclick="setStyle('${style}')"]`).classList.add('active');
+        selectedStyle = style;
+      }
+
       // Generate stars background
       function generateStars() {
         const container = document.getElementById('starsContainer');
@@ -298,6 +364,11 @@
 
         if (!userInput.trim()) return;
 
+        // Combine user input with selected style
+        const finalPrompt = selectedStyle 
+          ? `${userInput}. ${styles[selectedStyle]}`
+          : userInput;
+
         button.disabled = true;
         loadingIndicator.style.display = 'block';
         loadingPlaceholder.style.display = 'block';
@@ -309,7 +380,7 @@
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ input: userInput })
+            body: JSON.stringify({ input: finalPrompt })
           });
           
           if (!response.ok) {
