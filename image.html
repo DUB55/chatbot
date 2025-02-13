@@ -16,7 +16,8 @@
 
       body {
         min-height: 100vh;
-        background: linear-gradient(to bottom, #000044, #000033, #000066);
+        background: linear-gradient(135deg, #000033, #000044, #000066);
+        background-attachment: fixed;
         color: white;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         position: relative;
@@ -52,11 +53,11 @@
 
       .stars {
         font-size: 2.5rem;
-        margin: 1rem 0; /* Add margin for spacing */
-        display: block; /* Ensure stars are displayed as a block element */
-        text-align: center; /* Center stars horizontally */
-        position: relative; /* Change to relative positioning */
-        z-index: 2; /* Ensure stars are above other elements */
+        margin: 1rem 0;
+        display: block;
+        text-align: center;
+        position: relative;
+        z-index: 2;
       }
 
       .image-container {
@@ -145,7 +146,21 @@
       .image-display img {
         max-width: 100%;
         border-radius: 0.5rem;
-        display: none; /* Initially hidden */
+        display: none;
+        transition: filter 0.3s ease;
+        filter: blur(10px);
+      }
+
+      .image-display img.loaded {
+        filter: blur(0);
+      }
+
+      .loading-placeholder {
+        padding: 2rem;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 0.5rem;
+        color: rgba(255, 255, 255, 0.7);
+        display: none;
       }
 
       .stars {
@@ -215,13 +230,13 @@
         <h1>AI Image Generator</h1>
         <h2>Create your image:</h2>
       </header>
-      
+
       <!-- Stars positioned here -->
       <div class="stars" id="starsContainer" style="position: absolute; top: 150px; left: 50%; transform: translateX(-50%); z-index: 2;">
         ★★★★★
       </div>
 
-      <main class="image-container">
+      <div class="image-container">
         <textarea 
           id="userInput" 
           class="textarea" 
@@ -238,19 +253,20 @@
 
         <div class="loading" id="loadingIndicator"></div>
 
-        <div id="responseContainer" class="response-container">
-          <h2>Image URL:</h2>
-          <div id="responseContent" class="response-content"></div>
-        </div>
-
-        <div id="imageDisplay" class="image-display">
+        <div class="response-container" id="responseContainer">
           <h2>Image Preview:</h2>
-          <img id="image" src="" alt="Image will be displayed here" />
+          <div class="image-display">
+            <div id="loadingPlaceholder" class="loading-placeholder">Loading image...</div>
+            <img id="generatedImage" src="" alt="Generated image" />
+          </div>
         </div>
-      </main>
+      </div>
     </div>
 
     <script>
+      // Configuration
+      const added_blur = true;  // Set to false to disable blur effect
+      
       // Generate stars background
       function generateStars() {
         const container = document.getElementById('starsContainer');
@@ -277,13 +293,15 @@
         const button = document.getElementById('sendButton');
         const loadingIndicator = document.getElementById('loadingIndicator');
         const responseContainer = document.getElementById('responseContainer');
-        const responseContent = document.getElementById('responseContent');
-        const image = document.getElementById('image');
+        const image = document.getElementById('generatedImage');
+        const loadingPlaceholder = document.getElementById('loadingPlaceholder');
 
         if (!userInput.trim()) return;
 
         button.disabled = true;
-        loadingIndicator.style.display = 'block';  // Show loading indicator
+        loadingIndicator.style.display = 'block';
+        loadingPlaceholder.style.display = 'block';
+        image.style.display = 'none';
 
         try {
           const response = await fetch('https://chatbot-beta-weld.vercel.app/api/image', {
@@ -299,19 +317,29 @@
           }
 
           const data = await response.json();
-          responseContent.textContent = data.url;  // Display the image URL
-          image.src = data.url;  // Set the image source to the URL returned
-          image.style.display = 'block';  // Show the image
+          // Show image immediately with blur
+          image.src = data.url;
+          image.style.display = 'block';
+          if (added_blur) {
+            image.style.filter = 'blur(10px)';
+          }
           responseContainer.classList.add('visible');
+
+          // Preload high-quality version
+          const imageObj = new Image();
+          imageObj.onload = function() {
+            loadingPlaceholder.style.display = 'none';
+            if (added_blur) {
+              image.style.filter = 'blur(0)';
+            }
+          };
+          imageObj.src = data.url;
         } catch (error) {
           console.error('Error:', error);
-          responseContent.textContent = "Sorry, there was an error getting the response.";
-          image.style.display = 'none';  // Hide the image on error
-          responseContainer.classList.add('visible');
+          loadingPlaceholder.textContent = 'Error loading image. Please try again.';
         } finally {
           button.disabled = false;
-          loadingIndicator.style.display = 'none';  // Hide loading indicator
-          button.textContent = 'Create Image';
+          loadingIndicator.style.display = 'none';
         }
       }
 
@@ -319,4 +347,4 @@
       generateStars();
     </script>
   </body>
-</html> 
+</html>
