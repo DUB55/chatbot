@@ -1,23 +1,47 @@
-   {
-     "version": 2,
-     "builds": [
-       {
-         "src": "dir/coder.py",
-         "use": "@vercel/python"
-       },
-       {
-         "src": "chatbot.html",
-         "use": "@vercel/static"
-       }
-     ],
-     "routes": [
-       {
-         "src": "/api/chatbot",
-         "dest": "dir/coder.py"
-       },
-       {
-         "src": "/chatbot.html",
-         "dest": "chatbot.html"
-       }
-     ]
-   }
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "dir/coder.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "dir/image.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "chatbot.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "image.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "test_chatbot.html",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/chatbot",
+      "dest": "dir/coder.py"
+    },
+    {
+      "src": "/api/image",
+      "dest": "dir/image.py"
+    },
+    {
+      "src": "/chatbot.html",
+      "dest": "chatbot.html"
+    },
+    {
+      "src": "/image.html",
+      "dest": "image.html"
+    },
+    {
+      "src": "/test_chatbot.html",
+      "dest": "test_chatbot.html"
+    }
+  ]
+}
