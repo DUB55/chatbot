@@ -4,3 +4,4 @@ g4f
 python-multipart
 opencv-python-headless
 pillow
+numpy
