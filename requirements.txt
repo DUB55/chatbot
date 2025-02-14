@@ -1,3 +1,6 @@
 fastapi
 uvicorn
 g4f
+python-multipart
+opencv-python
+pillow
