@@ -2,5 +2,5 @@ fastapi
 uvicorn
 g4f
 python-multipart
-opencv-python
+opencv-python-headless
 pillow
