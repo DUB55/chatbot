@@ -570,7 +570,6 @@
   </body>
 </html> 
 --> 
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -656,6 +655,56 @@
         backdrop-filter: blur(8px);
         border-radius: 1rem;
         padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        min-height: 500px;
+        height: auto;
+        max-height: 90vh;
+      }
+
+      .messages-container {
+        flex-grow: 1;
+        overflow-y: auto;
+        margin-bottom: 1rem;
+        padding-right: 0.5rem;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .message {
+        margin-bottom: 1.5rem;
+        animation: fadeIn 0.3s ease-in-out;
+        flex-shrink: 0;
+      }
+
+      .message-content {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(4px);
+        padding: 1rem;
+        border-radius: 0.5rem;
+        font-size: 1.125rem;
+        max-width: 90%;
+      }
+
+      .user-message .message-content {
+        margin-left: auto;
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .assistant-message .message-content {
+        margin-right: auto;
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      .message-label {
+        font-size: 0.875rem;
+        margin-bottom: 0.5rem;
+        opacity: 0.8;
+      }
+
+      .input-container {
+        position: relative;
+        margin-top: auto;
       }
 
       .textarea {
@@ -766,6 +815,36 @@
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
       }
+
+      /* Custom scrollbar */
+      .messages-container::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .messages-container::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+      }
+
+      .messages-container::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 3px;
+      }
+
+      .messages-container::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.3);
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
     </style>
   </head>
   <body>
@@ -783,21 +862,28 @@
       
 
       <main class="chat-container">
-        <textarea 
-          id="userInput" 
-          class="textarea" 
-          placeholder="Type your message here..."
-        ></textarea>
-        
-        <button 
-          id="sendButton" 
-          class="button"
-          onclick="handleGetResponse()"
-        >
-          Send Message
-        </button>
+        <div class="messages-container" id="messagesContainer">
+          <!-- Messages will be inserted here -->
+        </div>
 
-        <div class="loading" id="loadingIndicator"></div>
+        <div class="input-container">
+          <textarea 
+            id="userInput" 
+            class="textarea" 
+            placeholder="Type your message here..."
+            rows="3"
+          ></textarea>
+          
+          <button 
+            id="sendButton" 
+            class="button"
+            onclick="handleGetResponse()"
+          >
+            Send Message
+          </button>
+
+          <div class="loading" id="loadingIndicator"></div>
+        </div>
 
         <div id="responseContainer" class="response-container">
           <h2>Response:</h2>
@@ -842,22 +928,43 @@
         return text;
       }
 
+      // Function to add a message to the chat
+      function addMessage(content, isUser = false) {
+        const messagesContainer = document.getElementById('messagesContainer');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+        
+        messageDiv.innerHTML = `
+          <div class="message-label">${isUser ? 'You' : 'Assistant'}</div>
+          <div class="message-content">${formatText(content)}</div>
+        `;
+        
+        messagesContainer.appendChild(messageDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+        // Update chat history
+        updateChatHistory([{ role: isUser ? 'You' : 'Assistant', content }]);
+      }
+
       // Handle response
       async function handleGetResponse() {
         const userInput = document.getElementById('userInput').value;
         const button = document.getElementById('sendButton');
         const loadingIndicator = document.getElementById('loadingIndicator');
-        const responseContainer = document.getElementById('responseContainer');
-        const responseContent = document.getElementById('responseContent');
-        const historyContent = document.getElementById('historyContent');
 
         if (!userInput.trim()) {
           alert("Please enter a message.");
           return;
         }
 
+        // Add user message to chat
+        addMessage(userInput, true);
+        
+        // Clear input field
+        document.getElementById('userInput').value = '';
+
         button.disabled = true;
-        loadingIndicator.style.display = 'block';  // Show loading indicator
+        loadingIndicator.style.display = 'block';
 
         try {
           const response = await fetch('https://chatbot-beta-weld.vercel.app/api/chatbot', {
@@ -873,21 +980,13 @@
           }
 
           const data = await response.json();
-          responseContent.innerHTML = formatText(data.output);  // Use innerHTML to render formatted text
-          responseContainer.classList.add('visible');
-
-          // Update chat history display
-          updateChatHistory(data.history);
+          addMessage(data.output, false);
         } catch (error) {
           console.error('Error:', error);
-          responseContent.textContent = "Sorry, there was an error getting the response.";
-          responseContainer.classList.add('visible');
-          document.getElementById('errorContainer').textContent = "An error occurred. Please try again later.";
-          document.getElementById('retryButton').style.display = 'block';
+          addMessage("Sorry, there was an error getting the response.", false);
         } finally {
           button.disabled = false;
-          loadingIndicator.style.display = 'none';  // Hide loading indicator
-          button.textContent = 'Send Message';
+          loadingIndicator.style.display = 'none';
         }
       }
 
@@ -918,15 +1017,18 @@
       // Keyboard shortcuts
       document.addEventListener('keydown', (event) => {
         if (event.ctrlKey && event.key === 'Enter') {
-          handleGetResponse();  // Send message on Ctrl + Enter
+          handleGetResponse();
         }
         if (event.key === 'Escape') {
-          clearChatHistory();  // Clear history on Escape
+          clearChatHistory();
         }
       });
 
       // Initialize stars on load
       generateStars();
+
+      // Add initial message
+      addMessage("Hello! How can I help you today?", false);
     </script>
   </body>
 </html>
