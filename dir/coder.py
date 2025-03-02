@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from g4f.client import Client
 from pydantic import BaseModel
 import asyncio
 from typing import Optional
+import json
 
 # Create FastAPI instance
 app = FastAPI()
@@ -62,22 +64,23 @@ chat_history = [
     {"role": "system", "content": SYSTEM_PROMPT}
 ]
 
-async def attempt_chat_completion(messages, max_retries=3):
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model="gpt-4",
-                messages=messages,
-                web_search=False,
-                stream=False,
-                timeout=30
-            )
-            return response
-        except Exception as e:
-            if attempt == max_retries - 1:  # Last attempt
-                raise
-            await asyncio.sleep(2)  # Wait 2 seconds before retrying
-            continue
+async def stream_chat_completion(messages):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
+            web_search=False,
+            stream=True,
+            timeout=30
+        )
+        
+        for chunk in response:
+            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
+                content = chunk.choices[0].delta.content
+                if content:
+                    yield f"data: {json.dumps({'content': content})}\n\n"
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 @app.post("/api/chatbot")
 async def chatbot_response(user_input: UserInput):
@@ -89,18 +92,12 @@ async def chatbot_response(user_input: UserInput):
         ]
         
         messages.append({"role": "user", "content": user_input.input})
-
-        response = await attempt_chat_completion(messages)
         
-        assistant_response = response.choices[0].message.content
+        return StreamingResponse(
+            stream_chat_completion(messages),
+            media_type='text/event-stream'
+        )
         
-        chat_history.append({"role": "user", "content": user_input.input})
-        chat_history.append({"role": "assistant", "content": assistant_response})
-
-        return {
-            "output": assistant_response,
-            "history": [msg for msg in chat_history if msg["role"] != "system"]
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
