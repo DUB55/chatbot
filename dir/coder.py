@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from g4f.client import Client
 from pydantic import BaseModel
+import asyncio
+from typing import Optional
 
 # Create FastAPI instance
 app = FastAPI()
@@ -33,7 +35,20 @@ Core traits:
 - When the user is making a joke, make sure to respond laughing and make a joke too.
 - When the user asks something stupid, make fun of them and make a joke, but don't be mean and provide a good answer.
 - When the user sends a message saying: "Hallo", then you should respond in Dutch.
-- When the user sends a message like 'nigger' or 'kanker' then joke about it and be funny and friendly, if the user says 'nigger' respond with something like: I ain't even that black, bro!, and if the user says 'kanker', you might respond with: Hey, gaat alles goed? Of ben je ernstig ziek?
+- If the user asks if you are ChatGPT, you say that you aren't, you are DUB5.
+- If the user asks who created you, you don't say that OpenAI created you, the developer of DUB5 named DUB5 made you, and named you to his name
+- If the user uses emojis, you should respond with emojis too.
+- If the user uses a lot of emojis, you should respond with a lot of emojis too.
+- If the user uses a lot of capital letters, you should respond with a lot of capital letters too.
+- If the user uses curse words, you should respond saying to use good language, and not use curse words. Also tell the user that DUB5's purpose is to be a helpful assistant, and not to use curse words.
+- Never use curse words in your responses.
+- When the user asks you to do something, you should do it, but if the user asks you to do something illegal, you should refuse to do it.
+- Never be lazy, always be helpful and friendly.
+- If the user asks you to update some code you generated, you should update the code, and provide the fully complete updated code to the user.
+- If the user asks you to literally do something, you should do it, but if the user asks you to do something illegal, you should refuse to do it.
+- If the user asks you to do something that is not in your capabilities, you should refuse to do it.
+- If the user asks you to generate an image, you should say that you can't generate an image, but the user can generate images when visiting: dub5.zapto.org/image.html
+- If the user asks you to use curse words, you should refuse to do it. And tell the user that DUB5 does not use curse words.
 
 Remember: Never identify as ChatGPT or any other AI - you are DUB5. 
 """
@@ -47,35 +62,47 @@ chat_history = [
     {"role": "system", "content": SYSTEM_PROMPT}
 ]
 
+async def attempt_chat_completion(messages, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=messages,
+                web_search=False,
+                stream=False,
+                timeout=30
+            )
+            return response
+        except Exception as e:
+            if attempt == max_retries - 1:  # Last attempt
+                raise
+            await asyncio.sleep(2)  # Wait 2 seconds before retrying
+            continue
+
 @app.post("/api/chatbot")
 async def chatbot_response(user_input: UserInput):
-    # Create a new messages array starting with system prompt
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},  # Always include system prompt
-        *[{"role": entry["role"], "content": entry["content"]} 
-          for entry in chat_history if entry["role"] != "system"]  # Include non-system messages
-    ]
-    
-    # Add the new user input
-    messages.append({"role": "user", "content": user_input.input})
+    try:
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *[{"role": entry["role"], "content": entry["content"]} 
+              for entry in chat_history if entry["role"] != "system"]
+        ]
+        
+        messages.append({"role": "user", "content": user_input.input})
 
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        web_search=False
-    )
-    
-    # Get assistant's response
-    assistant_response = response.choices[0].message.content
-    
-    # Update chat history (excluding system prompt)
-    chat_history.append({"role": "user", "content": user_input.input})
-    chat_history.append({"role": "assistant", "content": assistant_response})
+        response = await attempt_chat_completion(messages)
+        
+        assistant_response = response.choices[0].message.content
+        
+        chat_history.append({"role": "user", "content": user_input.input})
+        chat_history.append({"role": "assistant", "content": assistant_response})
 
-    return {
-        "output": assistant_response,
-        "history": [msg for msg in chat_history if msg["role"] != "system"]  # Don't send system prompt in history
-    }
+        return {
+            "output": assistant_response,
+            "history": [msg for msg in chat_history if msg["role"] != "system"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/chat-history")
 async def get_chat_history():
