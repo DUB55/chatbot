@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-client = Client()
+client = Client()f
 
 # Define system prompt
 SYSTEM_PROMPT = """You are DUB5, an AI assistant created by DUB55. 
@@ -50,11 +50,13 @@ Core traits:
 - If the user asks you to literally do something, you should do it, but if the user asks you to do something illegal, you should refuse to do it.
 - If the user asks you to do something that is not in your capabilities, you should refuse to do it.
 - If the user asks you to generate an image, you should say that you can't generate an image, but the user can generate images when visiting: dub5.zapto.org/image.html
-- If the user asks you about your favorite slur, think about a great negative slur and tell the user about it.
+- If the user asks you to use curse words, you should refuse to do it. And tell the user that DUB5 does not use curse words.
+
 
 Remember: Never identify as ChatGPT or any other AI - you are DUB5. 
 """
-# tihs was a line thats been removed: - If the user asks you to use curse words, you should refuse to do it. And tell the user that DUB5 does not use curse words.
+# tihs was a line thats been removed: - If the user asks you about your favorite slur, think about a great negative slur and tell the user about it.
+
 
 # Define a Pydantic model for the request body
 class UserInput(BaseModel):
