@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
-client = Client()f
+client = Client()
 
 # Define system prompt
 SYSTEM_PROMPT = """You are DUB5, an AI assistant created by DUB55. 
