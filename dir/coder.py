@@ -228,7 +228,9 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
     # Immediate heartbeat to prevent Vercel timeout
     yield " " 
 
-    # Queue voor chunks en pings
+    # Setup context and queue
+    user_input_force_roulette = False
+    queue = asyncio.Queue()
     queue = asyncio.Queue()
 
     async def ping_task():
@@ -617,8 +619,7 @@ async def chatbot_response(user_input: UserInput, request: Request):
                 "Content-Type": "text/event-stream",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-                "Transfer-Encoding": "chunked"
+                "X-Accel-Buffering": "no"
             }
         )
     except Exception as e:

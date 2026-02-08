@@ -84,7 +84,6 @@ def smart_context_manager(messages: list, model: str, max_tokens: int = 4000) ->
     if total_tokens <= max_tokens:
         return messages
 
-    # Skip summarization if it's likely to cause a timeout (e.g., very large history)
-    # or just perform a simple trim for speed.
+    # Skip summarization to prevent pre-stream timeouts in Vercel
     logger.info(f"Context over limit ({total_tokens} > {max_tokens}). Trimming...")
     return trim_history(messages, max_tokens)

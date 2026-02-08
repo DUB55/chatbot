@@ -66,4 +66,12 @@
       "memory": 1024
     }
   }
+}
+  ],
+  "functions": {
+    "dir/coder.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
 } 
