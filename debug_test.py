@@ -1,9 +1,9 @@
 import requests
 import json
 import time
+import sys
 
-def test_personality(name, input_text):
-    url = "http://localhost:8000/api/chatbot"
+def test_personality(name, input_text, url="http://localhost:8000/api/chatbot"):
     payload = {
         "input": input_text,
         "model": "gpt-4o-mini",
@@ -51,6 +51,11 @@ def test_personality(name, input_text):
         return False
 
 if __name__ == "__main__":
+    target_url = "http://localhost:8000/api/chatbot"
+    if len(sys.argv) > 1:
+        target_url = sys.argv[1]
+        print(f"Testing against remote URL: {target_url}")
+
     tests = [
         ("general", "Hello!"),
         ("teacher", "Explain 1+1"),
@@ -60,7 +65,7 @@ if __name__ == "__main__":
     
     results = []
     for p, text in tests:
-        results.append(test_personality(p, text))
+        results.append(test_personality(p, text, url=target_url))
     
     if all(results):
         print("\nALL PERSONALITIES WORKING!")

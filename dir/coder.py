@@ -10,6 +10,34 @@ current_dir = Path(__file__).parent.absolute()
 if str(current_dir) not in sys.path:
     sys.path.append(str(current_dir))
 
+# Mock g4f if it fails to import (for Vercel deployment stability)
+try:
+    import g4f
+    from g4f.client import Client
+except Exception as ge:
+    print(f"CRITICAL: Failed to import g4f: {ge}")
+    # Minimal mock to prevent crash on import
+    class MockClient:
+        def __init__(self, *args, **kwargs): pass
+        class Chat:
+            class Completions:
+                def create(self, *args, **kwargs): return []
+            completions = Completions()
+        chat = Chat()
+    Client = MockClient
+    g4f = type('MockG4F', (), {
+        'Provider': type('MockProv', (), {}), 
+        'debug': type('MockDebug', (), {'version_check': False, 'logging': False}), 
+        'cookies': type('MockCookies', (), {'set_cookies_dir': lambda x: None}),
+        'version': '0.0.0'
+    })
+
+# Add missing provider attributes to g4f.Provider if they are missing
+if hasattr(g4f, 'Provider'):
+    for prov_name in ["Blackbox", "DuckDuckGo", "OperaAria", "PollinationsAI", "DeepInfra", "PuterJS", "TeachAnything", "ItalyGPT", "GlhfChat"]:
+        if not hasattr(g4f.Provider, prov_name):
+            setattr(g4f.Provider, prov_name, None)
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -49,8 +77,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ---- Import your AI client ----
-from g4f.client import Client
-import g4f
+# Already handled above with mock safety
 import nest_asyncio
 
 # Apply nest_asyncio to allow nested event loops (needed for g4f 7.0.0 in some environments)
@@ -66,26 +93,24 @@ g4f.debug.logging = False
 
 # Ensure g4f doesn't crash on missing cookie directories (Vercel-Safe Environment)
 import os
-import g4f.cookies
 try:
-    # Use /tmp on Vercel/Linux, otherwise local .g4f_cache
-    if os.path.exists("/tmp"):
-        cache_dir = "/tmp/.g4f_cache"
-    else:
-        cache_dir = os.path.join(os.getcwd(), ".g4f_cache")
-        
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir, exist_ok=True)
-        
-    g4f.cookies.set_cookies_dir(cache_dir)
-    # Also set other potentially problematic paths if needed in future g4f versions
+    if hasattr(g4f, 'cookies'):
+        # Use /tmp on Vercel/Linux, otherwise local .g4f_cache
+        if os.path.exists("/tmp"):
+            cache_dir = "/tmp/.g4f_cache"
+        else:
+            cache_dir = os.path.join(os.getcwd(), ".g4f_cache")
+            
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+            
+        g4f.cookies.set_cookies_dir(cache_dir)
 except Exception as ce:
     logger.warning(f"Could not set local cookies directory: {ce}")
 
 try:
-    from g4f.cookies import set_cookies_dir
-    # Set to a safe location or disable
-    g4f.debug.logging = False
+    if hasattr(g4f, 'debug'):
+        g4f.debug.logging = False
 except:
     pass
 
@@ -316,15 +341,16 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             # Standard Roulette Logic via g4f (Dynamic Provider Resilience)
             logger.info(f"Using g4f provider roulette for {model}")
             
-            import g4f.Provider
             from models import STABLE_PROVIDERS
             
             # Filter available providers dynamically to avoid import errors
             reliable_providers = []
-            for p_name in STABLE_PROVIDERS:
-                p_obj = getattr(g4f.Provider, p_name, None)
-                if p_obj and p_obj.working:
-                    reliable_providers.append(p_obj)
+            if hasattr(g4f, 'Provider'):
+                for p_name in STABLE_PROVIDERS:
+                    p_obj = getattr(g4f.Provider, p_name, None)
+                    # Check if it's a valid provider object with a working status
+                    if p_obj and (getattr(p_obj, 'working', False) or hasattr(p_obj, 'create_completion')):
+                        reliable_providers.append(p_obj)
             
             success = False
             # Try reliable providers first (Fail-Fast Provider Rotation)
