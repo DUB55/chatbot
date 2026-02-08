@@ -1,6 +1,6 @@
 import logging
 from typing import Dict
-from .builder_prompt import BUILDER_SYSTEM_PROMPT
+from builder_prompt import BUILDER_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
