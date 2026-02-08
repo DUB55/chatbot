@@ -1,9 +1,26 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from g4f.client import Client
 from pydantic import BaseModel
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+# Mock g4f if it fails to import (for Vercel deployment stability)
+try:
+    import g4f
+    from g4f.client import Client
+    
+    # Disable noise
+    if hasattr(g4f, 'debug'):
+        g4f.debug.version_check = False
+        g4f.debug.logging = False
+except Exception as ge:
+    class MockClient:
+        def __init__(self, *args, **kwargs): pass
+        class Images:
+            def generate(self, *args, **kwargs):
+                raise Exception("G4F niet beschikbaar in deze omgeving")
+        images = Images()
+    Client = MockClient
 
 # Create FastAPI instance
 app = FastAPI()
@@ -11,13 +28,16 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins; you can specify your frontend URL here
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-client = Client()
+try:
+    client = Client()
+except:
+    client = None
 executor = ThreadPoolExecutor()  # Create a thread pool executor
 
 # Define a Pydantic model for the request body

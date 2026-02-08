@@ -44,11 +44,13 @@ def trim_history(messages: list, max_tokens: int = 4000) -> list:
 def summarize_context(messages: list, model: str = "gpt-3.5-turbo") -> str:
     """
     Vraagt de AI om een samenvatting te maken van de oudste berichten.
-    Dit wordt synchroon aangeroepen (blocking) voor eenvoud, maar in een 
-    echte productie-app zou dit async zijn.
     """
-    from g4f.client import Client
-    client = Client()
+    try:
+        from g4f.client import Client
+        client = Client()
+    except:
+        logger.warning("G4F client not available for summarization")
+        return ""
     
     # Selecteer de oudste berichten om samen te vatten (bijv. de eerste 6 na de system prompt)
     to_summarize = messages[1:7]

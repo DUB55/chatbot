@@ -87,9 +87,12 @@ except Exception as ne:
     logger.warning(f"Could not apply nest_asyncio: {ne}")
 
 # Disable g4f version check and other noise
-import g4f.debug
-g4f.debug.version_check = False
-g4f.debug.logging = False
+try:
+    if hasattr(g4f, 'debug'):
+        g4f.debug.version_check = False
+        g4f.debug.logging = False
+except:
+    pass
 
 # Ensure g4f doesn't crash on missing cookie directories (Vercel-Safe Environment)
 import os
