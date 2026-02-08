@@ -84,16 +84,7 @@ def smart_context_manager(messages: list, model: str, max_tokens: int = 4000) ->
     if total_tokens <= max_tokens:
         return messages
 
-    logger.info(f"Context over limit ({total_tokens} > {max_tokens}). Summarizing...")
-    
-    # Maak samenvatting van oudste berichten
-    summary = summarize_context(messages, model)
-    
-    if summary:
-        # Update system prompt met de samenvatting voor langetermijngeheugen
-        system_msg["content"] += f"\n\nContext uit eerdere berichten: {summary}"
-        # Verwijder de berichten die zijn samengevat
-        history = history[6:] 
-    
-    # Trim alsnog als het nog steeds te lang is
-    return trim_history([system_msg] + history, max_tokens)
+    # Skip summarization if it's likely to cause a timeout (e.g., very large history)
+    # or just perform a simple trim for speed.
+    logger.info(f"Context over limit ({total_tokens} > {max_tokens}). Trimming...")
+    return trim_history(messages, max_tokens)

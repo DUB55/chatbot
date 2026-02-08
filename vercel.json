@@ -59,5 +59,11 @@
       "src": "/image_to_video.html",
       "dest": "image_to_video.html"
     }
-  ]
+  ],
+  "functions": {
+    "dir/coder.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
 } 

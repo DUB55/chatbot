@@ -224,6 +224,9 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
     
     # Metadata event
     yield f"data: {json.dumps({'type': 'metadata', 'model': model, 'personality': personality_name})}\n\n"
+    
+    # Immediate heartbeat to prevent Vercel timeout
+    yield " " 
 
     # Queue voor chunks en pings
     queue = asyncio.Queue()
@@ -609,7 +612,14 @@ async def chatbot_response(user_input: UserInput, request: Request):
 
         return StreamingResponse(
             stream_chat_completion(messages, model, user_input.web_search, personality, user_input.image),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "Transfer-Encoding": "chunked"
+            }
         )
     except Exception as e:
         logger.error(f"Error in chatbot_response: {e}")
