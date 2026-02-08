@@ -54,7 +54,8 @@ if __name__ == "__main__":
     tests = [
         ("general", "Hello!"),
         ("teacher", "Explain 1+1"),
-        ("writer", "Write a haiku about code")
+        ("writer", "Write a haiku about code"),
+        ("coder", "Maak een simpele HTML pagina met een knop die 'Hallo' zegt.")
     ]
     
     results = []
