@@ -1,0 +1,4 @@
+{"user": null, "model": "gpt-4o-mini", "provider": "TeachAnything", "completion_tokens": 50, "prompt_tokens": 627, "total_tokens": 677}
+{"user": null, "model": "gpt-4o-mini", "provider": "TeachAnything", "completion_tokens": 237, "prompt_tokens": 658, "total_tokens": 895}
+{"user": null, "model": "gpt-4o-mini", "provider": "TeachAnything", "completion_tokens": 20, "prompt_tokens": 656, "total_tokens": 676}
+{"user": null, "model": "gpt-4o-mini", "provider": "ApiAirforce", "completion_tokens": 43, "prompt_tokens": 618, "total_tokens": 661}

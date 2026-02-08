@@ -28,19 +28,15 @@ FALLBACK_MODEL = "gpt-3.5-turbo"
 # List of providers that are known to be free and stable (No API key required)
 # Updated for g4f 7.0.0
 STABLE_PROVIDERS = [
+    "Blackbox",
+    "DuckDuckGo",
+    "OperaAria",
     "PollinationsAI",
     "DeepInfra",
-    "ApiAirforce",
-    "HuggingFace",
-    "BlackboxPro",
-    "ItalyGPT",
-    "LMArena",
-    "OperaAria",
-    "GlhfChat",
     "PuterJS",
     "TeachAnything",
-    "DarkAI",
-    "DuckDuckGo"
+    "ItalyGPT",
+    "GlhfChat"
 ]
 
 # Providers that support web search natively

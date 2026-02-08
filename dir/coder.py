@@ -51,9 +51,43 @@ logger = logging.getLogger(__name__)
 # ---- Import your AI client ----
 from g4f.client import Client
 import g4f
+import nest_asyncio
 
-# Disable g4f version check to prevent pre-stream delays/crashes
+# Apply nest_asyncio to allow nested event loops (needed for g4f 7.0.0 in some environments)
+try:
+    nest_asyncio.apply()
+except Exception as ne:
+    logger.warning(f"Could not apply nest_asyncio: {ne}")
+
+# Disable g4f version check and other noise
+import g4f.debug
 g4f.debug.version_check = False
+g4f.debug.logging = False
+
+# Ensure g4f doesn't crash on missing cookie directories (Vercel-Safe Environment)
+import os
+import g4f.cookies
+try:
+    # Use /tmp on Vercel/Linux, otherwise local .g4f_cache
+    if os.path.exists("/tmp"):
+        cache_dir = "/tmp/.g4f_cache"
+    else:
+        cache_dir = os.path.join(os.getcwd(), ".g4f_cache")
+        
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+        
+    g4f.cookies.set_cookies_dir(cache_dir)
+    # Also set other potentially problematic paths if needed in future g4f versions
+except Exception as ce:
+    logger.warning(f"Could not set local cookies directory: {ce}")
+
+try:
+    from g4f.cookies import set_cookies_dir
+    # Set to a safe location or disable
+    g4f.debug.logging = False
+except:
+    pass
 
 # ---- Import project modules ----
 from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
@@ -244,9 +278,11 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
 
     def fetch_chunks():
         nonlocal full_response_text
+        # No need for new event loop if we use the g4f Client's default behavior
+        # g4f 7.0.0 Client is optimized for synchronous streaming in threads
+
         try:
             # SPECIAL LAYER: Direct Pollinations AI for Coder Personality
-            # This ensures the Web App Builder is fast and reliable
             if personality_name == "coder" and not force_roulette:
                 logger.info("Using specialized Pollinations AI layer for Coder")
                 try:
@@ -273,30 +309,95 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                                         asyncio.run_coroutine_threadsafe(queue.put(content), loop)
                                 except json.JSONDecodeError:
                                     continue
-                    return # Exit if successful
+                    return 
                 except Exception as pe:
                     logger.error(f"Pollinations direct layer failed: {pe}. Falling back to roulette.")
-                    # Fall through to g4f if direct layer fails
 
-            # Standard Roulette Logic via g4f
+            # Standard Roulette Logic via g4f (Dynamic Provider Resilience)
             logger.info(f"Using g4f provider roulette for {model}")
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True,
-                web_search=web_search
-            )
-            for chunk in response:
-                content = chunk.choices[0].delta.content or ""
-                if content:
-                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+            
+            import g4f.Provider
+            from models import STABLE_PROVIDERS
+            
+            # Filter available providers dynamically to avoid import errors
+            reliable_providers = []
+            for p_name in STABLE_PROVIDERS:
+                p_obj = getattr(g4f.Provider, p_name, None)
+                if p_obj and p_obj.working:
+                    reliable_providers.append(p_obj)
+            
+            success = False
+            # Try reliable providers first (Fail-Fast Provider Rotation)
+            for provider in reliable_providers:
+                try:
+                    logger.info(f"Attempting reliable provider: {provider.__name__}")
+                    g4f_client = Client(provider=provider)
+                    
+                    # Create the generator
+                    response = g4f_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=True
+                    )
+                    
+                    provider_has_content = False
+                    start_wait = time.time()
+                    
+                    # We need a way to timeout if the provider hangs during iteration
+                    # Since we are in a thread, we'll check time inside the loop
+                    try:
+                        for chunk in response:
+                            # Check for 15s timeout if we haven't received any content yet
+                            if not provider_has_content and (time.time() - start_wait > 15):
+                                logger.warning(f"Provider {provider.__name__} timed out (15s) without content")
+                                break
+                                
+                            if hasattr(chunk, 'choices') and chunk.choices:
+                                content = chunk.choices[0].delta.content or ""
+                                if content and content.strip():
+                                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+                                    provider_has_content = True
+                    except Exception as loop_e:
+                        logger.warning(f"Error during {provider.__name__} iteration: {loop_e}")
+                        continue
+                    
+                    if provider_has_content:
+                        success = True
+                        logger.info(f"Success with {provider.__name__}")
+                        break # Success! (Content Verification)
+                    else:
+                        logger.warning(f"Provider {provider.__name__} returned no content or timed out")
+                        continue
+                except Exception as pe:
+                    logger.warning(f"Provider {provider.__name__} failed: {pe}")
+                    continue
+            
+            if not success:
+                # Last ditch effort with default g4f Client (let it handle its own roulette)
+                logger.info("Reliable providers failed, trying default g4f Client roulette")
+                try:
+                    g4f_client = Client()
+                    response = g4f_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        stream=True,
+                        web_search=web_search
+                    )
+                    for chunk in response:
+                        if hasattr(chunk, 'choices') and chunk.choices:
+                            content = chunk.choices[0].delta.content or ""
+                            if content:
+                                asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+                except Exception as final_e:
+                    logger.error(f"Default roulette also failed: {final_e}")
+                    raise final_e
 
         except Exception as e:
             logger.error(f"Critical error in fetch_chunks: {e}")
             error_msg = f"DUB5 Systeemfout: {str(e)}"
             asyncio.run_coroutine_threadsafe(queue.put(Exception(error_msg)), loop)
         finally:
-            # Always signal end of stream to prevent generator from hanging
+            # Always signal end of stream
             asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
     try:
@@ -320,9 +421,9 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                 # Pas filtering toe op de buffer
                 cleaned_buffer = clean_text(stream_buffer)
                 
-                # Sliding Window: We houden een 'lookahead' aan om te voorkomen dat we een 
-                # watermerk doormidden snijden als het over meerdere chunks komt.
-                lookahead = 150 # Genoeg voor de langste bekende watermerk
+                # Sliding Window: We houden een kleine buffer aan om te voorkomen dat we een 
+                # watermerk doormidden snijden, maar niet zo groot dat het traag aanvoelt.
+                lookahead = 40 # Voldoende voor de meeste korte watermerk-onderdelen
                 if len(cleaned_buffer) > lookahead:
                     safe_to_send = cleaned_buffer[:-lookahead]
                     stream_buffer = cleaned_buffer[-lookahead:]
@@ -383,8 +484,8 @@ async def chatbot_response(user_input: UserInput, request: Request):
     logger.info(f"Request received: model={model}, thinking_mode={thinking_mode}, personality={personality}, web_search={user_input.web_search}")
     
     # Combined system prompts
-    mode_prompt = THINKING_MODES[thinking_mode]["system_prompt"]
-    personality_prompt = PERSONALITIES[personality]["system_prompt"]
+    mode_prompt = THINKING_MODES.get(thinking_mode, THINKING_MODES[DEFAULT_THINKING_MODE])["system_prompt"]
+    personality_prompt = PERSONALITIES.get(personality, PERSONALITIES[DEFAULT_PERSONALITY])["system_prompt"]
     
     # Log analytics
     input_tokens = count_tokens(user_input.input, model)
@@ -408,7 +509,12 @@ async def chatbot_response(user_input: UserInput, request: Request):
         # Voeg history toe van de frontend
         if user_input.history:
             for msg in user_input.history:
-                messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+                # Ensure each history item is a valid dictionary with role and content
+                if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    messages.append({"role": msg["role"], "content": msg["content"]})
+                elif isinstance(msg, list) and len(msg) >= 2:
+                    # Fallback for old list-style history [role, content]
+                    messages.append({"role": msg[0], "content": msg[1]})
         
         # VERWERK GEÜPLOADE BESTANDEN
         file_context = ""
