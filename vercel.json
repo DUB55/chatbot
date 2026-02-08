@@ -1,45 +1,22 @@
 {
   "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "dir/coder.py",
-      "use": "@vercel/python"
+      "source": "/api/chatbot",
+      "destination": "dir/coder.py"
     },
     {
-      "src": "dir/image.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "chatbot.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "image.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/chatbot",
-      "dest": "dir/coder.py"
-    },
-    {
-      "src": "/api/image",
-      "dest": "dir/image.py"
-    },
-    {
-      "src": "/chatbot.html",
-      "dest": "chatbot.html"
-    },
-    {
-      "src": "/image.html",
-      "dest": "image.html"
+      "source": "/api/image",
+      "destination": "dir/image.py"
     }
   ],
   "functions": {
     "dir/coder.py": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "dir/image.py": {
+      "maxDuration": 60
     }
   }
 }
