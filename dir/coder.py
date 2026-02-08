@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 from g4f.client import Client
 import g4f
 
+# Disable g4f version check to prevent pre-stream delays/crashes
+g4f.debug.version_check = False
+
 # ---- Import project modules ----
 from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
 from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
@@ -206,7 +209,7 @@ class ChatCache:
 chat_cache = ChatCache()
 
 # ---- Chat streaming helper ----
-async def stream_chat_completion(messages, model, web_search=False, personality_name="general", image_data=None):
+async def stream_chat_completion(messages, model, web_search=False, personality_name="general", image_data=None, force_roulette=False):
     start_time = time.time()
     
     # Check Cache
@@ -229,8 +232,6 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
     yield " " 
 
     # Setup context and queue
-    user_input_force_roulette = False
-    queue = asyncio.Queue()
     queue = asyncio.Queue()
 
     async def ping_task():
@@ -244,229 +245,65 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
     def fetch_chunks():
         nonlocal full_response_text
         try:
-            # 0. Specialized Builder Layer: Direct Pollinations AI for Coder Personality
-            # This provides a more stable and faster experience for the Web App Builder.
-            # Only used if not forcing roulette and not using web search.
-            if personality_name == "coder" and not web_search and not getattr(user_input, 'force_roulette', False):
-                logger.info("Builder Personality detected. Using Direct Pollinations AI Layer.")
+            # SPECIAL LAYER: Direct Pollinations AI for Coder Personality
+            # This ensures the Web App Builder is fast and reliable
+            if personality_name == "coder" and not force_roulette:
+                logger.info("Using specialized Pollinations AI layer for Coder")
                 try:
-                    # Pollinations AI text API is very fast and reliable for code generation
-                    # We use a random seed to ensure unique responses
-                    seed = random.randint(1, 1000000)
-                    url = f"https://text.pollinations.ai/"
-                    
-                    payload = {
-                        "messages": messages,
-                        "model": "openai",
-                        "stream": True,
-                        "seed": seed
-                    }
-                    
-                    with httpx.stream("POST", url, json=payload, timeout=60.0) as response:
-                        if response.status_code == 200:
-                            has_content = False
-                            for chunk in response.iter_text():
-                                if chunk:
-                                    # Forward the chunk to the queue
-                                    asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
-                                    has_content = True
-                            
-                            if has_content:
-                                asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                                return
-                        else:
-                            logger.warning(f"Direct Pollinations AI failed with status {response.status_code}")
-                except Exception as de:
-                    logger.error(f"Direct Pollinations AI error: {de}")
-                    # Fall back to g4f providers if direct call fails
+                    with httpx.stream(
+                        "POST",
+                        "https://text.pollinations.ai/openai",
+                        json={
+                            "messages": messages,
+                            "model": "openai",
+                            "stream": True,
+                            "system_prompt": messages[0]["content"] if messages and messages[0]["role"] == "system" else None
+                        },
+                        timeout=60.0
+                    ) as response:
+                        for line in response.iter_lines():
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk_data = json.loads(data_str)
+                                    content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                    if content:
+                                        asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+                                except json.JSONDecodeError:
+                                    continue
+                    return # Exit if successful
+                except Exception as pe:
+                    logger.error(f"Pollinations direct layer failed: {pe}. Falling back to roulette.")
+                    # Fall through to g4f if direct layer fails
 
-            # 1. Web Search Layer: If search is enabled, try search-capable providers first
-            if web_search:
-                logger.info("Web search enabled. Prioritizing search providers.")
-                for s_p_name in SEARCH_PROVIDERS:
-                    s_provider = getattr(g4f.Provider, s_p_name, None)
-                    if not s_provider: continue
-                    
-                    try:
-                        logger.info(f"Search Layer: Provider={s_p_name}")
-                        response = client.chat.completions.create(
-                            model="gpt-4o", # Search providers usually handle model mapping internally
-                            messages=messages,
-                            provider=s_provider,
-                            stream=True,
-                            timeout=15,
-                            web_search=True
-                        )
-                        has_content = False
-                        for chunk in response:
-                            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
-                                    has_content = True
-                        if has_content:
-                            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                            return
-                    except Exception as se:
-                        logger.debug(f"Search Layer Error ({s_p_name}): {se}")
-                        continue
+            # Standard Roulette Logic via g4f
+            logger.info(f"Using g4f provider roulette for {model}")
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                stream=True,
+                web_search=web_search
+            )
+            for chunk in response:
+                content = chunk.choices[0].delta.content or ""
+                if content:
+                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
 
-            # 2. Primary Attempt: USE ONLY GUARANTEED FREE PROVIDERS FIRST
-            # We avoid "auto" select initially because it often hits providers requiring API keys
-            # Unique models list to avoid duplicate calls
-            priority_models = []
-            for m in [model, "gpt-4o", "gpt-4o-mini", "gpt-4", "gpt-3.5-turbo", "llama-3.1-70b"]:
-                if m not in priority_models:
-                    priority_models.append(m)
-            
-            # Updated for g4f 7.0.0
-            priority_providers = ["PollinationsAI", "ApiAirforce", "DeepInfra", "HuggingFace", "GlhfChat", "Blackbox"]
-            
-            # SEND INITIAL HEARTBEAT TO FRONTEND
-            asyncio.run_coroutine_threadsafe(queue.put(" "), loop) 
-
-            # Step A: Try Priority Providers directly (Fastest & Most Reliable)
-            for p_name in priority_providers:
-                provider = getattr(g4f.Provider, p_name, None)
-                if not provider: 
-                    logger.debug(f"Provider {p_name} not found in g4f. Skipping.")
-                    continue
-                
-                # Try gpt-4o-mini first as it's often the most supported free model
-                ordered_models = ["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"]
-                for target_model in ordered_models:
-                    try:
-                        logger.info(f"Priority Layer: Provider={p_name}, Model={target_model}")
-                        # Use stream=True but also check for content quickly
-                        response = client.chat.completions.create(
-                            model=target_model, 
-                            messages=messages, 
-                            provider=provider,
-                            stream=True, 
-                            timeout=12, # Slightly more time for stability
-                            web_search=web_search
-                        )
-                        
-                        first = True
-                        has_content = False
-                        for chunk in response:
-                            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    if first: 
-                                        logger.info(f"Priority Layer SUCCESS: {p_name} with {target_model}")
-                                        first = False
-                                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
-                                    has_content = True
-                        
-                        if has_content:
-                            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                            return
-                    except Exception as pe:
-                        # Detailed error logging
-                        pe_str = str(pe).lower()
-                        logger.debug(f"Priority Layer Error: {p_name} - {target_model}: {pe}")
-                        
-                        # If a provider explicitly asks for an API key, we should log it but skip it immediately
-                        if any(x in pe_str for x in ["api_key", "api key", "auth", "token", "unauthorized"]):
-                            logger.warning(f"Provider {p_name} requested API key or auth. Skipping.")
-                            break # Try next provider
-                        
-                        # If the model is not supported, try the next model
-                        if "model does not exist" in pe_str or "not supported" in pe_str:
-                            continue
-                            
-                        # If the provider is completely down/not working, try next model or provider
-                        continue
-
-            # 3. Deep Fallback Loop (STABLE_PROVIDERS - Cleaned list)
-            import random
-            shuffled_providers = STABLE_PROVIDERS.copy()
-            random.shuffle(shuffled_providers)
-            
-            fallback_models = ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "llama-3.1-8b"]
-            for provider_name in shuffled_providers:
-                if provider_name in priority_providers: continue 
-                
-                breaker = get_breaker(provider_name)
-                if not breaker.can_execute(): continue
-                
-                provider = getattr(g4f.Provider, provider_name, None)
-                if not provider: continue
-
-                for f_model in fallback_models:
-                    try:
-                        logger.info(f"Deep Fallback Layer: Provider={provider_name}, Model={f_model}")
-                        response = client.chat.completions.create(
-                            model=f_model, messages=messages, provider=provider,
-                            stream=True, timeout=10, web_search=web_search
-                        )
-                        
-                        first = True
-                        has_content = False
-                        for chunk in response:
-                            if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                                content = chunk.choices[0].delta.content
-                                if content:
-                                    if first: 
-                                        breaker.record_success()
-                                        logger.info(f"Deep Fallback SUCCESS: {provider_name}")
-                                        first = False
-                                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
-                                    has_content = True
-                        
-                        if has_content:
-                            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                            return
-                    except Exception as prov_e:
-                        breaker.record_failure()
-                        prov_e_str = str(prov_e).lower()
-                        logger.debug(f"Deep Fallback Error: {provider_name}: {prov_e}")
-                        if any(x in prov_e_str for x in ["api_key", "api key", "auth", "token", "unauthorized"]):
-                            break # Skip this provider
-                        if "model does not exist" in prov_e_str:
-                            continue # Try next model
-                        break 
-            
-            # 4. Final Rescue: Last-ditch attempt with known working pairs
-            rescue_pairs = [
-                ("gpt-4o-mini", "ApiAirforce"),
-                ("gpt-4o", "PollinationsAI"),
-                ("gpt-4o", "GlhfChat"),
-                ("gpt-4o", "Blackbox")
-            ]
-            for r_model, r_provider_name in rescue_pairs:
-                try:
-                    logger.warning(f"Rescue Layer: Attempting {r_provider_name} with {r_model}")
-                    r_provider = getattr(g4f.Provider, r_provider_name, None)
-                    if not r_provider: continue
-                    
-                    response = client.chat.completions.create(
-                        model=r_model, messages=messages, provider=r_provider,
-                        stream=True, timeout=15
-                    )
-                    has_content = False
-                    for chunk in response:
-                        if hasattr(chunk.choices[0], 'delta') and hasattr(chunk.choices[0].delta, 'content'):
-                            content = chunk.choices[0].delta.content
-                            if content:
-                                if not has_content: has_content = True
-                                asyncio.run_coroutine_threadsafe(queue.put(content), loop)
-                    if has_content:
-                        asyncio.run_coroutine_threadsafe(queue.put(None), loop)
-                        return
-                except Exception as ree:
-                    logger.debug(f"Rescue Layer Error: {r_provider_name}: {ree}")
-                    continue
-
-            error_msg = "DUB5 ervaart momenteel een verbindingsstoring. Probeer het over enkele seconden opnieuw."
-            asyncio.run_coroutine_threadsafe(queue.put(Exception(error_msg)), loop)
         except Exception as e:
             logger.error(f"Critical error in fetch_chunks: {e}")
             error_msg = f"DUB5 Systeemfout: {str(e)}"
             asyncio.run_coroutine_threadsafe(queue.put(Exception(error_msg)), loop)
+        finally:
+            # Always signal end of stream to prevent generator from hanging
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+        
     pinger = asyncio.create_task(ping_task())
     threading.Thread(target=fetch_chunks, daemon=True).start()
 
@@ -613,7 +450,14 @@ async def chatbot_response(user_input: UserInput, request: Request):
         logger.info(f"Context management: {len(messages)} messages sent to {model}")
 
         return StreamingResponse(
-            stream_chat_completion(messages, model, user_input.web_search, personality, user_input.image),
+            stream_chat_completion(
+                messages, 
+                model, 
+                user_input.web_search, 
+                personality, 
+                user_input.image,
+                getattr(user_input, 'force_roulette', False)
+            ),
             media_type="text/event-stream",
             headers={
                 "Content-Type": "text/event-stream",
