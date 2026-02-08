@@ -1,21 +1,11 @@
 {
   "version": 2,
-  "rewrites": [
-    {
-      "source": "/api/chatbot",
-      "destination": "dir/coder.py"
-    },
-    {
-      "source": "/api/image",
-      "destination": "dir/image.py"
-    }
-  ],
   "functions": {
-    "dir/coder.py": {
+    "api/chatbot.py": {
       "maxDuration": 60,
       "memory": 1024
     },
-    "dir/image.py": {
+    "api/image.py": {
       "maxDuration": 60
     }
   }
