@@ -1,3 +1,8 @@
 fastapi
 uvicorn
 g4f
+httpx
+pydantic
+PyPDF2
+python-docx
+python-multipart
