@@ -125,6 +125,9 @@ from personalities import PERSONALITIES, DEFAULT_PERSONALITY
 from circuit_breaker import get_breaker
 from file_parser import parse_multi_file_response, extract_clean_text
 from doc_parser import process_document
+from knowledge_manager import knowledge_manager
+from database import db
+from project_manager import project_manager
 
 # ---- Watermark Filtering ----
 WATERMARK_PATTERNS = [
@@ -209,6 +212,37 @@ class UserInput(BaseModel):
     force_roulette: Optional[bool] = False
     files: Optional[list[FileInput]] = []
     image: Optional[str] = None # Base64 encoded image
+    session_id: Optional[str] = "default"
+    library_ids: Optional[List[str]] = [] # IDs van opgeslagen leermateriaal
+
+# ---- Library API Endpoints ----
+class LibraryUpload(BaseModel):
+    user_id: str
+    title: str
+    content: str
+
+@app.post("/api/library/upload")
+async def upload_to_library(upload: LibraryUpload):
+    """Slaat een document op in de bibliotheek voor later gebruik (RAG)."""
+    try:
+        chunks = knowledge_manager.split_text(upload.content)
+        lib_id = db.add_to_library(upload.user_id, upload.title, upload.content, chunks)
+        return {"status": "success", "id": lib_id, "chunks": len(chunks)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/library/{user_id}")
+async def get_user_library(user_id: str):
+    """Haalt alle opgeslagen documenten van een gebruiker op."""
+    return {"library": db.get_library(user_id)}
+
+@app.delete("/api/library/{user_id}/{lib_id}")
+async def delete_from_library(user_id: str, lib_id: str):
+    """Verwijdert een document uit de bibliotheek."""
+    success = db.delete_from_library(user_id, lib_id)
+    if success:
+        return {"status": "deleted"}
+    raise HTTPException(status_code=404, detail="Document niet gevonden")
 
 # ---- Admin Analytics ----
 ADMIN_SECRET_KEY = os.environ.get("DUB5_ADMIN_KEY", "dub5_master_2026")
@@ -464,6 +498,14 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             chat_cache.set(cache_key, f"data: {json.dumps({'content': full_response_text})}\n\n")
 
         file_actions = parse_multi_file_response(full_response_text)
+        
+        # UPDATE PROJECT STATE (for AI Web App Builder)
+        if personality_name == "coder" and file_actions:
+            session_id = getattr(messages, 'session_id', 'default') # We'll pass this in
+            for file in file_actions:
+                project_manager.update_file(session_id, file.path, file.content)
+            logger.info(f"Updated project state for session {session_id} with {len(file_actions)} files")
+
         yield f"data: {json.dumps({'type': 'done', 'files': [f.to_dict() for f in file_actions] if file_actions else None})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -514,12 +556,38 @@ async def chatbot_response(user_input: UserInput, request: Request):
 
     combined_system_prompt = f"{base_prompt}\n\nROL: {personality.upper()}\n{personality_prompt}\n\nMODUS: {thinking_mode.upper()}\n{mode_prompt}"
     
+    # PROJECT CONTEXT (voor Web App Builder)
+    if personality == "coder":
+        project_context = project_manager.get_project_context(user_input.session_id)
+        combined_system_prompt += f"\n\n{project_context}"
+
     if user_input.web_search:
         combined_system_prompt += "\n\nWEB SEARCH ENABLED: You have access to real-time information via web search. Use this capability to provide up-to-date information if the user asks for news, current events, or data beyond your training cutoff."
+
+    # RAG: KENNIS UIT BIBLIOTHEEK (voor Learning Platform)
+    rag_context = ""
+    if user_input.library_ids:
+        # Hier gaan we chunks zoeken in de opgegeven library items
+        all_relevant_chunks = []
+        user_id = "default_user" # In de toekomst uit auth
+        
+        for lib_id in user_input.library_ids:
+            lib_data = db.data["libraries"].get(user_id, {}).get(lib_id)
+            if lib_data:
+                chunks = lib_data.get("chunks", [])
+                relevant = knowledge_manager.search_relevant_chunks(user_input.input, chunks, top_k=3)
+                all_relevant_chunks.extend(relevant)
+        
+        if all_relevant_chunks:
+            rag_context = "\n\nRELEVANTE KENNIS UIT BIBLIOTHEEK:\n" + "\n---\n".join(all_relevant_chunks)
+            combined_system_prompt += rag_context
 
     try:
         # Build messages with history (memory)
         messages = [{"role": "system", "content": combined_system_prompt}]
+        
+        # Attach session_id for project management
+        setattr(messages, 'session_id', user_input.session_id)
         
         # Voeg history toe van de frontend
         if user_input.history:
