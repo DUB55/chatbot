@@ -1,5 +1,15 @@
 {
   "version": 2,
+  "rewrites": [
+    {
+      "source": "/api/chatbot",
+      "destination": "api/chatbot.py"
+    },
+    {
+      "source": "/api/image",
+      "destination": "api/image.py"
+    }
+  ],
   "functions": {
     "api/chatbot.py": {
       "maxDuration": 60,

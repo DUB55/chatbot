@@ -126,48 +126,33 @@ from circuit_breaker import get_breaker
 from file_parser import parse_multi_file_response, extract_clean_text
 from doc_parser import process_document
 
-# ---- Watermark Filter ----
+# ---- Watermark Filtering ----
 WATERMARK_PATTERNS = [
-    "Want best roleplay experience?",
-    "https://llmplayground.net",
-    "Upgrade your plan to remove this message at",
-    "https://api.airforce.",
-    "https://api.airforce",
-    "api.airforce",
-    "llmplayground.net"
+    r"(?i)Want\s+best\s+roleplay\s+experience\?",
+    r"(?i)Upgrade\s+your\s+plan\s+to\s+remove\s+this\s+message",
+    r"(?i)(?:\bat\s+)?https?://(?:api\.airforce|llmplayground\.net)[^\s]*",
+    r"(?i)api\.airforce",
+    r"(?i)llmplayground\.net"
 ]
 
-def clean_text(text):
-    if not text: return ""
-    
-    # 1. Define extremely aggressive regex patterns
-    # These handle line breaks, multiple spaces, and variations
-    patterns = [
-        r"(?i)Want\s+best\s+roleplay\s+experience\?",
-        r"(?i)Upgrade\s+your\s+plan\s+to\s+remove\s+this\s+message",
-        r"(?i)(?:\bat\s+)?https?://(?:api\.airforce|llmplayground\.net)[^\s]*",
-        r"(?i)\bat\s+(?=https?://|api\.airforce|llmplayground\.net)", # Standalone 'at' before domain
-        r"(?i)api\.airforce",
-        r"(?i)llmplayground\.net",
-        r"(?i)\s*\bat\s*[\r\n]+\s*\.\s*[\r\n]*", # 'at' followed by '.' with newlines
-        r"(?i)\b(at)\b(?=\s*\.|\s*$)", # 'at' followed by a dot or end of string
-        r"(?i)--\s*$",
-        r"(?m)^\s*\.\s*$", # Standalone dots on a line
-        r"(?m)^\s*at\s*$"  # Standalone 'at' on a line
-    ]
-    
+def clean_text(text: str) -> str:
+    """Removes watermarks from streaming chunks."""
+    if not text:
+        return ""
     cleaned = text
-    for p in patterns:
-        cleaned = re.sub(p, "", cleaned, flags=re.IGNORECASE)
-    
-    # 2. Collapse excessive newlines (3 or more -> 2)
-    cleaned = re.sub(r"(\r\n|\r|\n){3,}", r"\n\n", cleaned)
-    
+    for pattern in WATERMARK_PATTERNS:
+        cleaned = re.sub(pattern, "", cleaned)
     return cleaned
 
-def final_clean_text(text):
-    """Final cleanup including stripping whitespace."""
-    return clean_text(text).strip()
+def final_clean_text(text: str) -> str:
+    """Aggressive final cleanup for the full response."""
+    if not text:
+        return ""
+    # Remove watermarks
+    cleaned = clean_text(text)
+    # Remove any leading/trailing whitespace that might have been left
+    cleaned = cleaned.strip()
+    return cleaned
 
 # ---- Load system prompt from environment variable ----
 SYSTEM_PROMPT = os.environ.get(
@@ -447,12 +432,12 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             else:
                 stream_buffer += item
                 
-                # Pas filtering toe op de buffer
+                # Sliding window logic for watermark removal
                 cleaned_buffer = clean_text(stream_buffer)
                 
-                # Sliding Window: We houden een kleine buffer aan om te voorkomen dat we een 
-                # watermerk doormidden snijden, maar niet zo groot dat het traag aanvoelt.
-                lookahead = 40 # Voldoende voor de meeste korte watermerk-onderdelen
+                # Only yield if we have enough buffer to be sure we're not cutting off a watermark mid-word
+                # Reduced lookahead for faster response
+                lookahead = 20 # Genoeg voor de meeste watermerken
                 if len(cleaned_buffer) > lookahead:
                     safe_to_send = cleaned_buffer[:-lookahead]
                     stream_buffer = cleaned_buffer[-lookahead:]
@@ -461,7 +446,8 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                         full_response_text += safe_to_send
                         yield f"data: {json.dumps({'content': safe_to_send})}\n\n"
                 else:
-                    stream_buffer = cleaned_buffer
+                    # Keep the buffer as is if it's too small
+                    pass
 
         # Laatste restje uit de buffer sturen
         if stream_buffer:
