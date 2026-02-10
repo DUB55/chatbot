@@ -101,11 +101,11 @@ async def handle_chatbot(request: Request):
     logger.info("Chatbot request received in index.py")
     
     # Gebruik een try-except om de body veilig uit te lezen
+    body = {}
     try:
         body = await request.json()
     except Exception as je:
         logger.error(f"JSON Parsing Error: {je}")
-        # Fallback body als JSON faalt
         body = {"input": "Hello", "history": []}
 
     user_input_text = body.get("input", "Hello")
@@ -118,9 +118,10 @@ async def handle_chatbot(request: Request):
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_input_text})
 
-    # ALTIJD een StreamingResponse teruggeven, wat er ook gebeurt
+    # ALTIJD een 200 OK StreamingResponse teruggeven om 500 errors te voorkomen
+    # De generator handelt interne fouten af en stuurt die als 'data: {"error": ...}'
     return StreamingResponse(
-        attempt_chatbot_logic(messages, body, request),
+        safe_chatbot_generator(messages, body, request),
         media_type="text/event-stream",
         headers={
             "Content-Type": "text/event-stream",
@@ -129,6 +130,17 @@ async def handle_chatbot(request: Request):
             "X-Accel-Buffering": "no"
         }
     )
+
+async def safe_chatbot_generator(messages, body, request):
+    """Wrapper generator die NOOIT crasht en altijd een geldige SSE stream stuurt."""
+    try:
+        async for chunk in attempt_chatbot_logic(messages, body, request):
+            yield chunk
+    except Exception as e:
+        logger.error(f"Generator Error: {e}")
+        error_msg = f"Systeemfout in generator: {str(e)}"
+        yield f"data: {json.dumps({'error': error_msg})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 async def attempt_chatbot_logic(messages, body, request):
     """Probeert eerst de zware chatbot, anders fallback."""
@@ -144,13 +156,20 @@ async def attempt_chatbot_logic(messages, body, request):
         if str(api_dir) not in sys.path: sys.path.insert(0, str(api_dir))
         if str(root_dir) not in sys.path: sys.path.insert(0, str(root_dir))
         
+        # Voorkom recursieve import van api.index als chatbot
         import importlib
+        chatbot_mod = None
         try:
-            chatbot_mod = importlib.import_module("chatbot")
-        except ImportError:
+            # Probeer eerst de chatbot in de root (lokaal)
+            if (root_dir / "chatbot.py").exists():
+                chatbot_mod = importlib.import_module("chatbot")
+            else:
+                chatbot_mod = importlib.import_module("api.chatbot")
+        except Exception as im_err:
+            logger.warning(f"Import failed: {im_err}. Trying api.chatbot directly.")
             chatbot_mod = importlib.import_module("api.chatbot")
         
-        if hasattr(chatbot_mod, 'chatbot_response'):
+        if chatbot_mod and hasattr(chatbot_mod, 'chatbot_response'):
             # Hier moeten we de generator van chatbot_response uitlezen
             # Omdat we al in een StreamingResponse zitten, moeten we de chunks doorgeven
             user_input_obj = chatbot_mod.UserInput(**body)
