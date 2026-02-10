@@ -6,15 +6,15 @@
       "destination": "api/index.py"
     },
     {
+      "source": "/chatbot",
+      "destination": "api/index.py"
+    },
+    {
       "source": "/api/system-status",
       "destination": "api/index.py"
     },
     {
       "source": "/status",
-      "destination": "api/status.py"
-    },
-    {
-      "source": "/system-status",
       "destination": "api/index.py"
     },
     {
