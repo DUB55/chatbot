@@ -407,7 +407,12 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
     try:
         stream_buffer = ""
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.warning("Queue get timeout in stream_chat_completion")
+                break
+                
             if item is None: break
             if isinstance(item, Exception): raise item
             
@@ -668,12 +673,12 @@ async def generate_image_api(image_input: ImageInput):
         fallback_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={image_input.width}&height={image_input.height}&nologo=true"
         return {"url": fallback_url}
 
-@app.get("/health")
-@app.get("/api/health")
-async def health_check():
-    # Basis health check voor de backend
+@app.get("/system-status")
+@app.get("/api/system-status")
+async def system_status():
+    # Basis status check voor de backend
     return {
-        "status": "ok",
+        "status": "online",
         "timestamp": time.time(),
         "version": VERSION,
         "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0,
