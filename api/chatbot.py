@@ -754,8 +754,9 @@ async def health_check():
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "version": "1.0.2",
-        "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0
+        "version": "1.0.3",
+        "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0,
+        "environment": "vercel" if os.environ.get("VERCEL") else "local"
     }
 
 @app.get("/api/admin/stats")
