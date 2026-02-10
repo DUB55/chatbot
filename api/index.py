@@ -121,10 +121,20 @@ try:
 except:
     pass
 
-# ---- Import project modules ----
+# ---- Import project modules with absolute imports for Vercel ----
 try:
-    from api.models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
-    from api.thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
+    # Op Vercel moeten we de absolute import 'api.models' gebruiken
+    import api.models as models_module
+    AVAILABLE_MODELS = models_module.AVAILABLE_MODELS
+    DEFAULT_MODEL = models_module.DEFAULT_MODEL
+    FALLBACK_MODEL = models_module.FALLBACK_MODEL
+    STABLE_PROVIDERS = models_module.STABLE_PROVIDERS
+    SEARCH_PROVIDERS = models_module.SEARCH_PROVIDERS
+    
+    import api.thinking_modes as thinking_modes_module
+    THINKING_MODES = thinking_modes_module.THINKING_MODES
+    DEFAULT_THINKING_MODE = thinking_modes_module.DEFAULT_THINKING_MODE
+    
     from api.context_manager import smart_context_manager, count_tokens
     from api.personalities import PERSONALITIES, DEFAULT_PERSONALITY
     from api.circuit_breaker import get_breaker
@@ -133,17 +143,39 @@ try:
     from api.knowledge_manager import knowledge_manager
     from api.database import db
     from api.project_manager import project_manager
-except ImportError:
-    from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
-    from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
-    from context_manager import smart_context_manager, count_tokens
-    from personalities import PERSONALITIES, DEFAULT_PERSONALITY
-    from circuit_breaker import get_breaker
-    from file_parser import parse_multi_file_response, extract_clean_text
-    from doc_parser import process_document
-    from knowledge_manager import knowledge_manager
-    from database import db
-    from project_manager import project_manager
+except Exception as e:
+    logger.error(f"Absolute import failed, trying relative: {e}")
+    try:
+        # Lokale fallback
+        from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
+        from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
+        from context_manager import smart_context_manager, count_tokens
+        from personalities import PERSONALITIES, DEFAULT_PERSONALITY
+        from circuit_breaker import get_breaker
+        from file_parser import parse_multi_file_response, extract_clean_text
+        from doc_parser import process_document
+        from knowledge_manager import knowledge_manager
+        from database import db
+        from project_manager import project_manager
+    except Exception as e2:
+        logger.error(f"Relative import failed too: {e2}")
+        # Definieer minimale fallbacks om crash te voorkomen
+        STABLE_PROVIDERS = []
+        AVAILABLE_MODELS = {"gpt-4o": "gpt-4o"}
+        DEFAULT_MODEL = "gpt-4o"
+        THINKING_MODES = {"balanced": {"system_prompt": ""}}
+        DEFAULT_THINKING_MODE = "balanced"
+        PERSONALITIES = {"general": {"system_prompt": ""}}
+        DEFAULT_PERSONALITY = "general"
+        # Dummy functions/objects
+        def count_tokens(t, m): return len(t)//4
+        def smart_context_manager(m, mo, mt): return m
+        class Dummy: 
+            def __getattr__(self, name): return lambda *a, **k: None
+        knowledge_manager = db = project_manager = Dummy()
+        get_breaker = lambda name: Dummy()
+        parse_multi_file_response = lambda t: []
+        process_document = lambda n, b: ""
 
 # ---- Watermark Filtering ----
 WATERMARK_PATTERNS = [
@@ -672,7 +704,7 @@ async def generate_image_api(image_input: ImageInput):
 @app.get("/health")
 @app.get("/api/health")
 @app.get("/")
-async def health_check():
+async def health_check(request: Request):
     # Basis health check voor de backend
     return {
         "status": "ok",
@@ -680,7 +712,10 @@ async def health_check():
         "version": VERSION,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
         "root_path": app.root_path,
-        "message": "DUB5 AI API is operational"
+        "url": str(request.url),
+        "path": request.url.path,
+        "message": "DUB5 AI API is operational",
+        "sys_path": sys.path[:3]
     }
 
 @app.get("/api/admin/stats")
