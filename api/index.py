@@ -89,18 +89,25 @@ async def g4f_ai_stream(user_query: str, history: list) -> AsyncGenerator[str, N
 async def simple_pollinations_stream(user_query: str) -> AsyncGenerator[str, None]:
     """Stabiele Pollinations Fallback (Gegarandeerd antwoord)."""
     try:
+        logger.info("--- DEBUG: Pollinations stream start ---")
         encoded_query = urllib.parse.quote(user_query)
         # Gebruik de simpele GET interface die altijd werkt
         url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system=You%20are%20DUB5%20AI"
+        logger.info(f"DEBUG: Pollinations URL: {url[:200]}")
+        # Forceer onmiddellijke start van SSE zodat headers worden verzonden
+        yield f"data: {json.dumps({'type': 'start', 'source': 'pollinations'})}\n\n"
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("GET", url) as response:
                 if response.status_code == 200:
                     yield f"data: {json.dumps({'type': 'metadata', 'model': 'pollinations-fallback'})}\n\n"
                     async for chunk in response.aiter_text():
-                        if chunk: yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        if chunk:
+                            logger.info(f"DEBUG: Pollinations chunk length: {len(chunk)}")
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 else:
+                    logger.error(f"DEBUG: Pollinations HTTP error: {response.status_code}")
                     yield f"data: {json.dumps({'error': f'AI Fallback Error: {response.status_code}'})}\n\n"
     except Exception as e:
         logger.error(f"Pollinations Fallback Fatal: {e}")
@@ -119,7 +126,7 @@ async def debug_info():
 
 @app.get("/")
 async def root():
-    return {"status": "online", "g4f": G4F_AVAILABLE}
+    return {"status": "online", "g4f": (get_g4f() is not None)}
 
 @app.get("/api/library/list")
 @app.get("/library/list")

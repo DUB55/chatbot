@@ -1199,7 +1199,11 @@
               }
 
               const chunk = decoder.decode(value);
+              console.log('--- DEBUG: Stream chunk received ---');
+              console.log('Chunk length:', value?.length || 0);
+              console.log('Chunk preview:', chunk.substring(0, 200));
               const lines = chunk.split('\n');
+              console.log('Lines in chunk:', lines.length);
               for (const line of lines) {
                 if (line.trim().startsWith('data: ')) {
                   const jsonStr = line.trim().substring(6);
@@ -1213,8 +1217,11 @@
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
                       scrollToBottom();
+                      console.log('--- DEBUG: Content appended ---');
+                      console.log('Current length:', assistantMsg.length);
                     }
                     if (data.error) {
+                      console.error('--- DEBUG: Error in stream data ---', data.error);
                       showAlert('Error', data.error);
                       break;
                     }
@@ -1225,7 +1232,9 @@
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
                       scrollToBottom();
+                      console.log('--- DEBUG: Fallback text appended ---');
                     }
+                    console.error('--- DEBUG: JSON parse error ---', e);
                   }
                 }
               }
