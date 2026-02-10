@@ -1157,6 +1157,15 @@
                 setTimeout(() => retryMessage(), 500);
                 return;
               }
+              
+              // Toon de foutmelding direct in de chat bubble
+              removeTyping(typingId);
+              const msgDiv = addMessageToUI('assistant', '');
+              const contentDiv = msgDiv.querySelector('.message-content');
+              contentDiv.innerHTML = `<div style="color: #ff4444; padding: 1rem; border: 1px solid #ff4444; border-radius: 8px; background: rgba(255, 68, 68, 0.1);">
+                <strong>Systeem Fout:</strong><br>${errorDetail}<br><br>
+                <em>Probeer het over een moment opnieuw of ververs de pagina.</em>
+              </div>`;
               throw new Error(errorDetail);
             }
 

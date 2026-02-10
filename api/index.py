@@ -100,69 +100,77 @@ async def fallback_pollinations_ai(messages):
 async def handle_chatbot(request: Request):
     logger.info("Chatbot request received in index.py")
     
+    # We bouwen de berichten hier alvast op voor het geval we direct naar fallback moeten
+    messages = [{"role": "system", "content": "You are DUB5, a professional AI assistant."}]
+    
     try:
         body = await request.json()
         user_input_text = body.get("input", "")
         history = body.get("history", [])
         
-        # Systeem prompt opbouwen
-        messages = [{"role": "system", "content": "You are DUB5, a professional AI assistant."}]
         for msg in history:
             if isinstance(msg, dict) and "role" in msg and "content" in msg:
                 messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": user_input_text})
 
-        # We proberen de zware modules te laden, maar als dat faalt gaan we direct naar fallback
-        try:
-            # We laden de zware modules NOOIT op Vercel om de 250MB limiet te omzeilen
-            if os.environ.get("VERCEL"):
-                raise ImportError("Vercel mode: Using Ultra-Light Fallback to avoid size limits")
-
-            # Voeg paden toe voor import (alleen lokaal)
-            api_dir = Path(__file__).parent.absolute()
-            root_dir = api_dir.parent.absolute()
-            
-            if str(api_dir) not in sys.path:
-                sys.path.insert(0, str(api_dir))
-            if str(root_dir) not in sys.path:
-                sys.path.insert(0, str(root_dir))
-            
-            # Alleen proberen te importeren als we niet op Vercel crashen
-            import importlib
-            try:
-                chatbot_mod = importlib.import_module("chatbot")
-            except ImportError:
-                chatbot_mod = importlib.import_module("api.chatbot")
-            
-            logger.info("Successfully loaded heavy chatbot module")
-            
-            # Controleer of we alle benodigde attributen hebben
-            if hasattr(chatbot_mod, 'chatbot_response') and hasattr(chatbot_mod, 'UserInput'):
-                user_input_obj = chatbot_mod.UserInput(**body)
-                return await chatbot_mod.chatbot_response(user_input_obj, request)
-            else:
-                raise AttributeError("Chatbot module loaded but missing required functions")
-            
-        except Exception as e:
-            logger.warning(f"Heavy module failed or too slow: {e}. Switching to Ultra-Light Fallback.")
-            # Fallback naar directe Pollinations API
-            return StreamingResponse(
-                fallback_pollinations_ai(messages),
-                media_type="text/event-stream",
-                headers={
-                    "Content-Type": "text/event-stream",
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive"
-                }
-            )
+        # Altijd StreamingResponse teruggeven voor Vercel stabiliteit
+        return StreamingResponse(
+            attempt_chatbot_logic(messages, body, request),
+            media_type="text/event-stream",
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no" # Belangrijk voor Vercel/Nginx streaming
+            }
+        )
 
     except Exception as e:
         logger.error(f"Global Proxy Error: {e}")
-        return Response(
-            content=json.dumps({"error": str(e), "trace": traceback.format_exc()}),
-            status_code=500,
-            media_type="application/json"
-        )
+        # Zelfs bij een fatale error sturen we een streaming response met de foutmelding
+        async def error_generator():
+            yield f"data: {json.dumps({'error': f'Fatal System Error: {str(e)}'})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        
+        return StreamingResponse(error_generator(), media_type="text/event-stream")
+
+async def attempt_chatbot_logic(messages, body, request):
+    """Probeert eerst de zware chatbot, anders fallback."""
+    try:
+        # We laden de zware modules NOOIT op Vercel om de 250MB limiet te omzeilen
+        if os.environ.get("VERCEL"):
+            logger.info("Vercel detected: Skipping heavy modules to avoid 250MB limit.")
+            raise ImportError("Vercel size limit safety")
+
+        # Lokale import poging
+        api_dir = Path(__file__).parent.absolute()
+        root_dir = api_dir.parent.absolute()
+        if str(api_dir) not in sys.path: sys.path.insert(0, str(api_dir))
+        if str(root_dir) not in sys.path: sys.path.insert(0, str(root_dir))
+        
+        import importlib
+        try:
+            chatbot_mod = importlib.import_module("chatbot")
+        except ImportError:
+            chatbot_mod = importlib.import_module("api.chatbot")
+        
+        if hasattr(chatbot_mod, 'chatbot_response'):
+            # Hier moeten we de generator van chatbot_response uitlezen
+            # Omdat we al in een StreamingResponse zitten, moeten we de chunks doorgeven
+            user_input_obj = chatbot_mod.UserInput(**body)
+            response = await chatbot_mod.chatbot_response(user_input_obj, request)
+            
+            # chatbot_response geeft zelf een StreamingResponse terug
+            async for chunk in response.body_iterator:
+                yield chunk
+            return
+        else:
+            raise AttributeError("Missing chatbot_response")
+
+    except Exception as e:
+        logger.warning(f"Using Fallback AI due to: {e}")
+        async for chunk in fallback_pollinations_ai(messages):
+            yield chunk
 
 # Proxy routes voor andere functionaliteit (simpel gehouden)
 @app.get("/api/library/list")
