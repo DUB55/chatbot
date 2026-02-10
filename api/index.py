@@ -2,11 +2,24 @@ import json
 import logging
 import httpx
 import asyncio
+import urllib.parse
 from typing import AsyncGenerator
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # Minimale logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 async def fallback_pollinations_ai(messages: list) -> AsyncGenerator[str, None]:
     """Directe verbinding met Pollinations AI."""
@@ -15,9 +28,10 @@ async def fallback_pollinations_ai(messages: list) -> AsyncGenerator[str, None]:
         system_prompt = "You are DUB5 AI, a helpful assistant."
         user_query = messages[-1]["content"] if messages else "Hello"
         
-        # Pollinations heeft een simpele GET interface die erg stabiel is
-        encoded_query = httpx.utils.quote(user_query)
-        url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system={httpx.utils.quote(system_prompt)}"
+        # Gebruik urllib.parse.quote in plaats van het niet-bestaande httpx.utils.quote
+        encoded_query = urllib.parse.quote(user_query)
+        encoded_system = urllib.parse.quote(system_prompt)
+        url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system={encoded_system}"
         
         async with httpx.AsyncClient(timeout=60.0) as client:
             async with client.stream("GET", url) as response:
@@ -37,18 +51,9 @@ async def fallback_pollinations_ai(messages: list) -> AsyncGenerator[str, None]:
         logger.error(f"Pollinations Stream Error: {e}")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-# FastAPI blijft als wrapper voor lokaal gebruik, maar we maken de route NOG simpeler
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+@app.get("/")
+async def root():
+    return {"message": "DUB5 AI API is running"}
 
 @app.get("/api/system-status")
 @app.get("/status")
@@ -62,7 +67,6 @@ async def list_libraries():
 
 @app.get("/favicon.ico")
 async def favicon():
-    from fastapi import Response
     return Response(status_code=204)
 
 @app.post("/api/chatbot")
@@ -72,8 +76,6 @@ async def chatbot_proxy(request: Request):
     body = {"input": "Hello", "history": []}
     
     try:
-        # We lezen de body als tekst en proberen het dan handmatig te parsen
-        # Dit is veiliger dan direct .json() op Vercel
         raw_body = await request.body()
         if raw_body:
             try:
@@ -84,7 +86,6 @@ async def chatbot_proxy(request: Request):
         user_input = body.get("input", "Hello")
         history = body.get("history", [])
         
-        # Systeem prompt opbouwen
         messages = [{"role": "system", "content": "You are DUB5 AI."}]
         if isinstance(history, list):
             for m in history:
@@ -106,7 +107,6 @@ async def chatbot_proxy(request: Request):
         )
     except Exception as e:
         logger.error(f"Chatbot Proxy Fatal Error: {e}")
-        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=500, 
             content={"error": f"Fatal Proxy Error: {str(e)}", "type": "proxy_crash"}
