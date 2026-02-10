@@ -103,7 +103,11 @@ async def handle_chatbot(request: Request):
 
         # We proberen de zware modules te laden, maar als dat faalt gaan we direct naar fallback
         try:
-            # Voeg paden toe voor import
+            # We laden de zware modules NOOIT op Vercel om de 250MB limiet te omzeilen
+            if os.environ.get("VERCEL"):
+                raise ImportError("Vercel mode: Using Ultra-Light Fallback to avoid size limits")
+
+            # Voeg paden toe voor import (alleen lokaal)
             api_dir = Path(__file__).parent.absolute()
             root_dir = api_dir.parent.absolute()
             

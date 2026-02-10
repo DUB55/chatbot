@@ -30,6 +30,9 @@
     "api/index.py": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/status.py": {
+      "memory": 128
     }
   }
 }
