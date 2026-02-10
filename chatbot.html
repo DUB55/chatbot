@@ -1568,9 +1568,18 @@
       }
 
       function showAlert(title, message) {
-        document.getElementById('alertTitle').innerText = title;
-        document.getElementById('alertMessage').innerText = message;
-        document.getElementById('alertModal').style.display = 'flex';
+        const alertTitle = document.getElementById('alertTitle');
+        const alertMessage = document.getElementById('alertMessage');
+        const alertModal = document.getElementById('alertModal');
+        
+        if (alertTitle && alertMessage && alertModal) {
+          alertTitle.innerText = title;
+          alertMessage.innerText = message;
+          alertModal.style.display = 'flex';
+        } else {
+          // Fallback als de modal elementen niet bestaan
+          alert(title + ": " + message);
+        }
       }
 
       function closeAlert() {

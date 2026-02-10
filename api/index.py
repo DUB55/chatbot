@@ -62,33 +62,58 @@ app.add_middleware(
 
 @app.get("/api/system-status")
 @app.get("/status")
+@app.get("/system-status")
 async def status():
     return {"status": "ok", "mode": "ultra-light"}
+
+@app.get("/api/library/list")
+async def list_libraries():
+    return {"libraries": []}
+
+@app.get("/favicon.ico")
+async def favicon():
+    from fastapi import Response
+    return Response(status_code=204)
 
 @app.post("/api/chatbot")
 @app.post("/chatbot")
 async def chatbot_proxy(request: Request):
     try:
-        body = await request.json()
-    except:
-        body = {"input": "Hello", "history": []}
-    
-    user_input = body.get("input", "Hello")
-    history = body.get("history", [])
-    messages = [{"role": "system", "content": "You are DUB5 AI."}]
-    for m in history:
-        if isinstance(m, dict) and "role" in m:
-            messages.append({"role": m["role"], "content": m.get("content", "")})
-    messages.append({"role": "user", "content": user_input})
+        # Probeer body handmatig te lezen als json() faalt
+        try:
+            body = await request.json()
+        except:
+            # Fallback voor lege of misvormde bodies
+            body = {"input": "Hello", "history": []}
+        
+        user_input = body.get("input", "Hello")
+        history = body.get("history", [])
+        
+        # Systeem prompt opbouwen
+        messages = [{"role": "system", "content": "You are DUB5 AI."}]
+        if isinstance(history, list):
+            for m in history:
+                if isinstance(m, dict) and "role" in m:
+                    messages.append({"role": m["role"], "content": m.get("content", "")})
+        
+        messages.append({"role": "user", "content": str(user_input)})
 
-    return StreamingResponse(
-        fallback_pollinations_ai(messages),
-        media_type="text/event-stream",
-        headers={
-            "X-Accel-Buffering": "no",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive"
-        }
-    )
+        return StreamingResponse(
+            fallback_pollinations_ai(messages),
+            media_type="text/event-stream",
+            headers={
+                "X-Accel-Buffering": "no",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Chatbot Proxy Error: {e}")
+        # Fallback generator voor stream errors
+        async def error_stream():
+            yield f"data: {json.dumps({'error': f'Internal Server Error: {str(e)}'})}\n\n"
+            yield f"data: [DONE]\n\n"
+        
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
 
 # Voor Vercel is 'app' de export die hij zoekt
