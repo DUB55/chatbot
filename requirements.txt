@@ -3,7 +3,4 @@ uvicorn
 httpx
 pydantic
 python-multipart
-# Verwijderde zware bibliotheken die de 250MB limiet overschrijden:
-# g4f[all] (bevat teveel browser drivers)
-# curl_cffi (erg groot en vaak incompatibel op serverless)
-# tiktoken (groot model bestand)
+g4f
