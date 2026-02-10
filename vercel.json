@@ -2,8 +2,16 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/",
-      "destination": "/chatbot.html"
+      "source": "/api/chatbot",
+      "destination": "api/index.py"
+    },
+    {
+      "source": "/api/system-status",
+      "destination": "api/index.py"
+    },
+    {
+      "source": "/status",
+      "destination": "api/status.py"
     },
     {
       "source": "/system-status",
@@ -12,13 +20,16 @@
     {
       "source": "/api/(.*)",
       "destination": "api/index.py"
+    },
+    {
+      "source": "/",
+      "destination": "/chatbot.html"
     }
   ],
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "memory": 1024,
-      "includeFiles": "api/**"
+      "memory": 1024
     }
   }
 }

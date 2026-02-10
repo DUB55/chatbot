@@ -4,19 +4,21 @@ import time
 import json
 import logging
 import traceback
+import httpx
+import asyncio
 from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Versie van de backend
-VERSION = "1.1.1"
+VERSION = "1.2.0-ULTRA-LIGHT"
 
-# --- STAP 1: Initialiseer FastAPI direct (geen zware imports eerst) ---
-# Zorg dat we zowel de root als /api ondersteunen
+# --- STAP 1: Initialiseer FastAPI direct ---
 app = FastAPI()
 
 app.add_middleware(
@@ -27,175 +29,138 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- STAP 2: Definieer Systeem Status Check die ALTIJD werkt ---
+# --- STAP 2: Definieer Systeem Status Check (MOET ALTIJD WERKEN) ---
 @app.get("/system-status")
 @app.get("/api/system-status")
-@app.get("/api/v1/status")
 @app.get("/")
 async def system_status(request: Request):
     return {
         "status": "online",
         "version": VERSION,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
-        "python_version": sys.version,
-        "path": sys.path,
-        "cwd": os.getcwd(),
-        "modules_loaded": CHATBOT_MODULES is not None
+        "timestamp": time.time(),
+        "uptime": "system is ready"
     }
 
-# --- STAP 3: Probeer zware modules pas bij aanvraag of later te laden ---
-# Dit voorkomt dat de hele app crasht bij het opstarten
-def load_heavy_modules():
+# --- STAP 3: Fallback AI Logica (zonder g4f) ---
+async def fallback_pollinations_ai(messages):
+    """Directe HTTP aanroep naar Pollinations AI als g4f faalt."""
     try:
-        # Voeg de root van het project EN de api map toe aan sys.path
-        api_dir = Path(__file__).parent.absolute()
-        root_dir = api_dir.parent.absolute()
-        
-        if str(api_dir) not in sys.path:
-            sys.path.insert(0, str(api_dir))
-        if str(root_dir) not in sys.path:
-            sys.path.insert(0, str(root_dir))
+        logger.info("Using Fallback Pollinations AI Layer")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # We sturen een streaming request
+            async with client.stream(
+                "POST",
+                "https://text.pollinations.ai/openai",
+                json={
+                    "messages": messages,
+                    "model": "openai",
+                    "stream": True
+                }
+            ) as response:
+                if response.status_code != 200:
+                    yield f"data: {json.dumps({'error': f'Pollinations Error: {response.status_code}'})}\n\n"
+                    return
 
-        logger.info(f"Loading heavy modules from {api_dir}...")
-        
-        # Importeer chatbot logica van chatbot.py
-        # We proberen verschillende importstijlen
-        try:
-            import chatbot
-            logger.info("Imported chatbot module successfully")
-        except ImportError as e:
-            logger.warning(f"Failed to import chatbot normally, trying api.chatbot: {e}")
-            import api.chatbot as chatbot
-            logger.info("Imported api.chatbot module successfully")
-        
-        return {
-            "chatbot_response": chatbot.chatbot_response,
-            "UserInput": chatbot.UserInput,
-            "LibraryUpload": chatbot.LibraryUpload,
-            "ImageInput": chatbot.ImageInput,
-            "upload_to_library": chatbot.upload_to_library,
-            "get_user_library": chatbot.get_user_library,
-            "delete_from_library": chatbot.delete_from_library,
-            "list_library": chatbot.list_library,
-            "generate_image_api": chatbot.generate_image_api,
-            "favicon": chatbot.favicon,
-            "serve_image_frontend": chatbot.serve_image_frontend,
-            "serve_chatbot_explicit": chatbot.serve_chatbot_explicit,
-            "serve_frontend": chatbot.serve_frontend
-        }
+                # Stuur metadata eerst
+                yield f"data: {json.dumps({'type': 'metadata', 'model': 'pollinations-fallback', 'status': 'fallback'})}\n\n"
+                
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str.strip() == "[DONE]":
+                            break
+                        try:
+                            chunk_data = json.loads(data_str)
+                            content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'content': content})}\n\n"
+                        except:
+                            continue
+                
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
     except Exception as e:
-        logger.error(f"CRITICAL: Error loading chatbot modules: {e}")
-        logger.error(traceback.format_exc())
-        return None
+        logger.error(f"Fallback AI Error: {e}")
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-# Globale cache voor modules
-CHATBOT_MODULES = None
-
-def get_chatbot_modules():
-    global CHATBOT_MODULES
-    if CHATBOT_MODULES is None:
-        CHATBOT_MODULES = load_heavy_modules()
-    return CHATBOT_MODULES
-
-# --- STAP 4: Definieer Proxy Routes ---
-
-@app.middleware("http")
-async def global_exception_handler(request: Request, call_next):
-    try:
-        return await call_next(request)
-    except Exception as e:
-        logger.error(f"GLOBAL ERROR: {e}")
-        return Response(
-            content=json.dumps({
-                "error": "Internal Server Error",
-                "message": str(e),
-                "trace": traceback.format_exc()
-            }),
-            status_code=500,
-            media_type="application/json"
-        )
-
+# --- STAP 4: De Chatbot Proxy ---
 @app.post("/chatbot")
 @app.post("/api/chatbot")
 async def handle_chatbot(request: Request):
-    logger.info("Chatbot request received")
-    modules = get_chatbot_modules()
-    if not modules:
-        logger.error("Failed to load chatbot modules")
-        return Response(
-            content=json.dumps({"error": "Chatbot modules failed to load. Check Vercel logs for CRITICAL errors."}),
-            status_code=503,
-            media_type="application/json"
-        )
+    logger.info("Chatbot request received in index.py")
     
     try:
         body = await request.json()
-        # Log limited body for security
-        logger.info(f"Body received: {list(body.keys())}")
+        user_input_text = body.get("input", "")
+        history = body.get("history", [])
         
-        # Gebruik de UserInput class van chatbot.py om te valideren
+        # Systeem prompt opbouwen
+        messages = [{"role": "system", "content": "You are DUB5, a professional AI assistant."}]
+        for msg in history:
+            if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": user_input_text})
+
+        # We proberen de zware modules te laden, maar als dat faalt gaan we direct naar fallback
         try:
-            user_input = modules["UserInput"](**body)
-        except Exception as ve:
-            logger.error(f"Validation Error: {ve}")
-            return Response(
-                content=json.dumps({"error": f"Validation Error: {str(ve)}"}),
-                status_code=400,
-                media_type="application/json"
-            )
+            # Voeg paden toe voor import
+            api_dir = Path(__file__).parent.absolute()
+            root_dir = api_dir.parent.absolute()
             
-        # Roep de originele chatbot_response aan
-        response = await modules["chatbot_response"](user_input, request)
-        return response
+            if str(api_dir) not in sys.path:
+                sys.path.insert(0, str(api_dir))
+            if str(root_dir) not in sys.path:
+                sys.path.insert(0, str(root_dir))
+            
+            # Alleen proberen te importeren als we niet op Vercel crashen
+            import importlib
+            try:
+                chatbot_mod = importlib.import_module("chatbot")
+            except ImportError:
+                chatbot_mod = importlib.import_module("api.chatbot")
+            
+            logger.info("Successfully loaded heavy chatbot module")
+            
+            # Controleer of we alle benodigde attributen hebben
+            if hasattr(chatbot_mod, 'chatbot_response') and hasattr(chatbot_mod, 'UserInput'):
+                user_input_obj = chatbot_mod.UserInput(**body)
+                return await chatbot_mod.chatbot_response(user_input_obj, request)
+            else:
+                raise AttributeError("Chatbot module loaded but missing required functions")
+            
+        except Exception as e:
+            logger.warning(f"Heavy module failed or too slow: {e}. Switching to Ultra-Light Fallback.")
+            # Fallback naar directe Pollinations API
+            return StreamingResponse(
+                fallback_pollinations_ai(messages),
+                media_type="text/event-stream",
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+
     except Exception as e:
-        logger.error(f"Proxy Chatbot Error: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Global Proxy Error: {e}")
         return Response(
-            content=json.dumps({
-                "error": "Internal Server Error in Proxy",
-                "message": str(e),
-                "trace": traceback.format_exc() if os.environ.get("VERCEL") else "Check logs"
-            }),
+            content=json.dumps({"error": str(e), "trace": traceback.format_exc()}),
             status_code=500,
             media_type="application/json"
         )
 
-@app.post("/api/library/upload")
-async def proxy_upload(upload_data: dict):
-    modules = get_chatbot_modules()
-    if modules:
-        try:
-            upload_obj = modules["LibraryUpload"](**upload_data)
-            return await modules["upload_to_library"](upload_obj)
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Modules not loaded"}
-
+# Proxy routes voor andere functionaliteit (simpel gehouden)
 @app.get("/api/library/list")
 async def proxy_list(user_id: str = "default_user"):
-    modules = get_chatbot_modules()
-    if modules:
-        try:
-            return await modules["list_library"](user_id)
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Modules not loaded"}
-
-@app.post("/api/image")
-async def proxy_image(image_data: dict):
-    modules = get_chatbot_modules()
-    if modules:
-        try:
-            image_obj = modules["ImageInput"](**image_data)
-            return await modules["generate_image_api"](image_obj)
-        except Exception as e:
-            return {"error": str(e)}
-    return {"error": "Modules not loaded"}
+    try:
+        import importlib
+        chatbot_mod = importlib.import_module("chatbot")
+        return await chatbot_mod.list_library(user_id)
+    except:
+        return {"libraries": []}
 
 @app.get("/favicon.ico")
-async def proxy_favicon():
-    modules = get_chatbot_modules()
-    if modules: return await modules["favicon"]()
+async def favicon():
     return Response(status_code=204)
 
 # Voor Vercel is 'app' de export die hij zoekt
