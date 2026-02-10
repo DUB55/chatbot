@@ -100,39 +100,35 @@ async def fallback_pollinations_ai(messages):
 async def handle_chatbot(request: Request):
     logger.info("Chatbot request received in index.py")
     
-    # We bouwen de berichten hier alvast op voor het geval we direct naar fallback moeten
-    messages = [{"role": "system", "content": "You are DUB5, a professional AI assistant."}]
-    
+    # Gebruik een try-except om de body veilig uit te lezen
     try:
         body = await request.json()
-        user_input_text = body.get("input", "")
-        history = body.get("history", [])
-        
-        for msg in history:
-            if isinstance(msg, dict) and "role" in msg and "content" in msg:
-                messages.append({"role": msg["role"], "content": msg["content"]})
-        messages.append({"role": "user", "content": user_input_text})
+    except Exception as je:
+        logger.error(f"JSON Parsing Error: {je}")
+        # Fallback body als JSON faalt
+        body = {"input": "Hello", "history": []}
 
-        # Altijd StreamingResponse teruggeven voor Vercel stabiliteit
-        return StreamingResponse(
-            attempt_chatbot_logic(messages, body, request),
-            media_type="text/event-stream",
-            headers={
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache, no-transform",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no" # Belangrijk voor Vercel/Nginx streaming
-            }
-        )
+    user_input_text = body.get("input", "Hello")
+    history = body.get("history", [])
+    
+    # Systeem prompt opbouwen
+    messages = [{"role": "system", "content": "You are DUB5, a professional AI assistant."}]
+    for msg in history:
+        if isinstance(msg, dict) and "role" in msg and "content" in msg:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_input_text})
 
-    except Exception as e:
-        logger.error(f"Global Proxy Error: {e}")
-        # Zelfs bij een fatale error sturen we een streaming response met de foutmelding
-        async def error_generator():
-            yield f"data: {json.dumps({'error': f'Fatal System Error: {str(e)}'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        
-        return StreamingResponse(error_generator(), media_type="text/event-stream")
+    # ALTIJD een StreamingResponse teruggeven, wat er ook gebeurt
+    return StreamingResponse(
+        attempt_chatbot_logic(messages, body, request),
+        media_type="text/event-stream",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 async def attempt_chatbot_logic(messages, body, request):
     """Probeert eerst de zware chatbot, anders fallback."""
