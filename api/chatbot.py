@@ -122,16 +122,28 @@ except:
     pass
 
 # ---- Import project modules ----
-from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
-from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
-from context_manager import smart_context_manager, count_tokens
-from personalities import PERSONALITIES, DEFAULT_PERSONALITY
-from circuit_breaker import get_breaker
-from file_parser import parse_multi_file_response, extract_clean_text
-from doc_parser import process_document
-from knowledge_manager import knowledge_manager
-from database import db
-from project_manager import project_manager
+try:
+    from api.models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
+    from api.thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
+    from api.context_manager import smart_context_manager, count_tokens
+    from api.personalities import PERSONALITIES, DEFAULT_PERSONALITY
+    from api.circuit_breaker import get_breaker
+    from api.file_parser import parse_multi_file_response, extract_clean_text
+    from api.doc_parser import process_document
+    from api.knowledge_manager import knowledge_manager
+    from api.database import db
+    from api.project_manager import project_manager
+except ImportError:
+    from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
+    from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
+    from context_manager import smart_context_manager, count_tokens
+    from personalities import PERSONALITIES, DEFAULT_PERSONALITY
+    from circuit_breaker import get_breaker
+    from file_parser import parse_multi_file_response, extract_clean_text
+    from doc_parser import process_document
+    from knowledge_manager import knowledge_manager
+    from database import db
+    from project_manager import project_manager
 
 # ---- Watermark Filtering ----
 WATERMARK_PATTERNS = [
@@ -742,7 +754,7 @@ async def health_check():
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "version": "1.0.1",
+        "version": "1.0.2",
         "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0
     }
 
