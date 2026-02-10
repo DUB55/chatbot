@@ -106,6 +106,17 @@ async def simple_pollinations_stream(user_query: str) -> AsyncGenerator[str, Non
         logger.error(f"Pollinations Fallback Fatal: {e}")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
+@app.get("/api/debug")
+async def debug_info():
+    """Geeft systeem informatie voor debugging op Vercel."""
+    return {
+        "python_version": sys.version,
+        "cwd": os.getcwd(),
+        "env_vars": {k: "SET" for k in os.environ.keys() if "KEY" not in k.upper() and "TOKEN" not in k.upper()},
+        "g4f_available": get_g4f() is not None,
+        "tmp_writable": os.access('/tmp', os.W_OK) if os.path.exists('/tmp') else False
+    }
+
 @app.get("/")
 async def root():
     return {"status": "online", "g4f": G4F_AVAILABLE}
@@ -126,11 +137,26 @@ async def ping():
 @app.post("/api/chatbot")
 @app.post("/chatbot")
 async def chatbot_proxy(request: Request):
+    logger.info("--- DEBUG: Backend Chatbot Request Started ---")
     try:
+        # Log headers
+        headers = dict(request.headers)
+        logger.info(f"DEBUG: Headers: {json.dumps(headers)}")
+
         raw_body = await request.body()
-        body = json.loads(raw_body.decode('utf-8')) if raw_body else {}
+        logger.info(f"DEBUG: Raw Body Length: {len(raw_body)}")
+        
+        try:
+            body = json.loads(raw_body.decode('utf-8')) if raw_body else {}
+            logger.info(f"DEBUG: Body Parsed: {json.dumps(body)[:200]}...")
+        except Exception as e:
+            logger.error(f"DEBUG: JSON Parse Error: {e}")
+            body = {}
+
         user_input = body.get("input", "Hallo")
         history = body.get("history", [])
+        
+        logger.info(f"DEBUG: Selected input: {user_input[:50]}")
         
         return StreamingResponse(
             g4f_ai_stream(user_input, history),
@@ -138,11 +164,20 @@ async def chatbot_proxy(request: Request):
             headers={
                 "X-Accel-Buffering": "no",
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive"
+                "Connection": "keep-alive",
+                "X-Debug-Status": "streaming-started"
             }
         )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.error(f"DEBUG: Fatal Chatbot Proxy Error: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, 
+            content={
+                "error": "Backend Fatal Crash", 
+                "detail": str(e),
+                "debug_info": "Check server logs for stacktrace"
+            }
+        )
 
 # Vercel entry point
 app = app
