@@ -196,9 +196,14 @@ Your mission is to provide the most advanced AI experience possible, reflecting 
     """
 )
 
-app = FastAPI()
+# ---- Initialize FastAPI ----
+# Gebruik root_path="/api" als we op Vercel draaien om de routing goed te laten verlopen
+app = FastAPI(root_path="/api" if os.environ.get("VERCEL") else "")
 client = Client()
-executor = ThreadPoolExecutor()
+executor = ThreadPoolExecutor(max_workers=10)
+
+# Versie van de backend
+VERSION = "1.0.7"
 
 # Bepaal de pad naar de chatbot.html (één map omhoog vanuit 'api')
 BASE_DIR = Path(__file__).parent.parent
@@ -326,29 +331,18 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
         yield cached_response
         return
 
-    logger.info(f"Starting chat completion with model: {model}, web_search: {web_search}, has_image: {image_data is not None}")
-    
-    full_response_text = ""
+    logger.info(f"Starting chat completion with model: {model}, web_search: {web_search}, session_id: {session_id}")
     
     # Metadata event
     yield f"data: {json.dumps({'type': 'metadata', 'model': model, 'personality': personality_name})}\n\n"
     
     # Immediate heartbeat to prevent Vercel timeout
-    yield " " 
+    yield ": heartbeat\n\n" 
 
-    # Setup context and queue
     queue = asyncio.Queue()
-
-    async def ping_task():
-        try:
-            while True:
-                await asyncio.sleep(15)
-                await queue.put("data: {\"type\": \"ping\"}\n\n")
-        except asyncio.CancelledError:
-            pass
-
-    def fetch_chunks():
-        nonlocal full_response_text
+    full_response_text = ""
+    
+    def fetch_chunks_sync(loop, queue):
         try:
             # Check for Pollinations direct layer first (faster for coder)
             if personality_name == "coder" and not force_roulette:
@@ -373,7 +367,7 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                                     chunk_data = json.loads(data_str)
                                     content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                     if content:
-                                        asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+                                        loop.call_soon_threadsafe(queue.put_nowait, content)
                                 except: continue
                     return 
                 except Exception as pe:
@@ -389,7 +383,6 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             )
             
             for chunk in response:
-                # Handle both object and dict responses from different g4f versions
                 content = ""
                 if hasattr(chunk, 'choices') and chunk.choices:
                     content = chunk.choices[0].delta.content or ""
@@ -399,21 +392,17 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                     content = chunk
                 
                 if content:
-                    asyncio.run_coroutine_threadsafe(queue.put(content), loop)
+                    loop.call_soon_threadsafe(queue.put_nowait, content)
                     
         except Exception as e:
-            logger.error(f"Critical error in fetch_chunks: {e}")
-            asyncio.run_coroutine_threadsafe(queue.put(Exception(f"DUB5 Error: {str(e)}")), loop)
+            logger.error(f"Critical error in fetch_chunks_sync: {e}")
+            loop.call_soon_threadsafe(queue.put_nowait, Exception(f"DUB5 Error: {str(e)}"))
         finally:
-            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+            loop.call_soon_threadsafe(queue.put_nowait, None)
 
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.get_event_loop()
-        
-    pinger = asyncio.create_task(ping_task())
-    threading.Thread(target=fetch_chunks, daemon=True).start()
+    # Start the fetcher in a separate thread
+    loop = asyncio.get_running_loop()
+    executor.submit(fetch_chunks_sync, loop, queue)
 
     try:
         stream_buffer = ""
@@ -421,54 +410,50 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             item = await queue.get()
             if item is None: break
             if isinstance(item, Exception): raise item
-            if item.startswith("data:"): yield item
-            else:
-                stream_buffer += item
-                
-                # Sliding window logic for watermark removal
-                cleaned_buffer = clean_text(stream_buffer)
-                
-                # Only yield if we have enough buffer to be sure we're not cutting off a watermark mid-word
-                # Reduced lookahead for faster response
-                lookahead = 20 # Genoeg voor de meeste watermerken
-                if len(cleaned_buffer) > lookahead:
-                    safe_to_send = cleaned_buffer[:-lookahead]
-                    stream_buffer = cleaned_buffer[-lookahead:]
-                    
-                    if safe_to_send:
-                        full_response_text += safe_to_send
-                        yield f"data: {json.dumps({'content': safe_to_send})}\n\n"
-                else:
-                    # Keep the buffer as is if it's too small
-                    pass
+            
+            # If it's a heartbeat/metadata from the fetcher (though rare in this setup)
+            if isinstance(item, str) and item.startswith("data:"):
+                yield item
+                continue
 
-        # Laatste restje uit de buffer sturen
+            stream_buffer += item
+            
+            # Sliding window logic for watermark removal
+            cleaned_buffer = clean_text(stream_buffer)
+            
+            # Reduced lookahead for faster response
+            lookahead = 20
+            if len(cleaned_buffer) > lookahead:
+                safe_to_send = cleaned_buffer[:-lookahead]
+                stream_buffer = cleaned_buffer[-lookahead:]
+                
+                if safe_to_send:
+                    full_response_text += safe_to_send
+                    yield f"data: {json.dumps({'content': safe_to_send})}\n\n"
+            
+        # Final cleanup and send remaining buffer
         if stream_buffer:
             final_segment = clean_text(stream_buffer)
             if final_segment:
                 full_response_text += final_segment
                 yield f"data: {json.dumps({'content': final_segment})}\n\n"
 
-        # Final cleanup for saved history and file parsing
+        # Final processing
         full_response_text = final_clean_text(full_response_text)
-        
-        # Save to Cache
         if full_response_text:
             chat_cache.set(cache_key, f"data: {json.dumps({'content': full_response_text})}\n\n")
 
         file_actions = parse_multi_file_response(full_response_text)
-        
-        # UPDATE PROJECT STATE (for AI Web App Builder)
         if personality_name == "coder" and file_actions:
             for file in file_actions:
                 project_manager.update_file(session_id, file.path, file.content)
-            logger.info(f"Updated project state for session {session_id} with {len(file_actions)} files")
+            logger.info(f"Updated project state for session {session_id}")
 
         yield f"data: {json.dumps({'type': 'done', 'files': [f.to_dict() for f in file_actions] if file_actions else None})}\n\n"
+        
     except Exception as e:
+        logger.error(f"Streaming error: {e}")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
-    finally:
-        pinger.cancel()
 
 # ---- Main chat API endpoint ----
 @app.post("/api/chatbot")
@@ -690,10 +675,11 @@ async def health_check():
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "version": "1.0.6",
+        "version": VERSION,
         "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
-        "sys_path": sys.path
+        "root_path": app.root_path,
+        "sys_path": sys.path[:5] # Eerste paar paden voor debug
     }
 
 @app.get("/api/admin/stats")

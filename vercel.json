@@ -6,6 +6,10 @@
       "destination": "/chatbot.html"
     },
     {
+      "source": "/api/health",
+      "destination": "api/chatbot.py"
+    },
+    {
       "source": "/api/chatbot",
       "destination": "api/chatbot.py"
     },
@@ -14,7 +18,7 @@
       "destination": "api/chatbot.py"
     },
     {
-      "source": "/api/health",
+      "source": "/api/library/(.*)",
       "destination": "api/chatbot.py"
     },
     {

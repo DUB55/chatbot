@@ -1,11 +1,11 @@
 fastapi
 uvicorn
-g4f>=0.3.5.0
+g4f
 httpx
 pydantic
 PyPDF2
 python-docx
 python-multipart
 tiktoken
-curl_cffi>=0.7.0
+curl_cffi
 nest-asyncio
