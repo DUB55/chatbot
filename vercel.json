@@ -14,6 +14,10 @@
       "destination": "api/chatbot.py"
     },
     {
+      "source": "/api/health",
+      "destination": "api/chatbot.py"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "api/chatbot.py"
     }

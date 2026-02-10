@@ -754,7 +754,7 @@ async def health_check():
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "version": "1.0.4",
+        "version": "1.0.5",
         "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0,
         "environment": "vercel" if os.environ.get("VERCEL") else "local",
         "sys_path": sys.path
