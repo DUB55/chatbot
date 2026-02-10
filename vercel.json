@@ -6,28 +6,12 @@
       "destination": "/chatbot.html"
     },
     {
-      "source": "/api/health",
-      "destination": "api/chatbot.py"
-    },
-    {
-      "source": "/api/chatbot",
-      "destination": "api/chatbot.py"
-    },
-    {
-      "source": "/api/image",
-      "destination": "api/chatbot.py"
-    },
-    {
-      "source": "/api/library/(.*)",
-      "destination": "api/chatbot.py"
-    },
-    {
       "source": "/api/(.*)",
-      "destination": "api/chatbot.py"
+      "destination": "api/index.py"
     }
   ],
   "functions": {
-    "api/chatbot.py": {
+    "api/index.py": {
       "maxDuration": 60,
       "memory": 1024,
       "includeFiles": "api/**"
