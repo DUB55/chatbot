@@ -1,0 +1,27 @@
+{
+  "libraries": {
+    "default_user": {
+      "f707b2ae238a": {
+        "id": "f707b2ae238a",
+        "title": "Test Document",
+        "content_summary": "De hoofdstad van Frankrijk is Parijs. De Eiffeltoren staat in Parijs....",
+        "chunks": [
+          "De hoofdstad van Frankrijk is Parijs. De Eiffeltoren staat in Parijs."
+        ],
+        "metadata": {},
+        "created_at": 1770740448.9088647
+      }
+    }
+  },
+  "projects": {
+    "test_session_123": {
+      "data": {
+        "files": {
+          "index.html": "//\tindex.html - Portfolio landing page\n<!DOCTYPE html>\n<html lang=\"nl\">\n<head>\n    <meta charset=\"utf-8\">\n    <title>Code Showcase – Portfolio</title>\n    <!-- Link naar externe stylesheet (optioneel) -->\n    <link rel=\"stylesheet\" href=\"src/css/style.css\">\n    <style>\n        body {font-family: Arial, Helvetica, sans-serif; margin:0; padding:0; color:#333; background:#f9f9f9;}\n        header {background:#2c3e50; color:#ecf0f1; padding:1rem; text-align:center;}\n        h1 {margin:0;}\n        section {padding:2rem;}\n        #about, #projects {background:#fff; margin:1rem auto; max-width:800px; box-shadow:0 2px 8px rgba(0,0,0,0.1);}\n        h2 {border-bottom:2px solid #2c3e50; padding-bottom:0.5rem;}\n        ul {list-style:none; padding:0;}\n        li {padding:0.5rem 0;}\n        footer {text-align:center; padding:1rem; background:#2c3e50; color:#ecf0f1;}\n    </style>\n</head>\n<body>\n    <header>\n        <h1>Code Showcase</h1>\n    </header>\n    <section id=\"about\">\n        <h2>Over Mij</h2>\n        <p>\n            Ik ben een ervaren full‑stack ontwikkelaar met een passie voor het bouwen van schaalbare, toegankelijke webapplicaties. Mijn expertise ligt in modern JavaScript (React, Node.js), backend‑technologieën en UX‑gericht design.\n        </p>\n    </section>\n    <section id=\"projects\">\n        <h2>Projecten</h2>\n        <ul>\n            <li>\n                <strong>Portfolio Platform</strong> – Een dynamische portfolio met CMS‑functionaliteit, gebouwd met React en Tailwind CSS.\n            </li>\n            <li>\n                <strong>E‑Commerce Shop</strong> – Een volledige webshop implementatie met stripe betalingsgateway en real‑time inventarisbeheer.\n            </li>\n            <li>\n                <strong>API Gateway</strong> – Een microservices‑friendly API gateway met rate limiting en logging, gecreëerd in Node.js en Express.\n            </li>\n        </ul>\n    </section>\n    <footer>\n        <p>&copy; 2026 Jouw Naam</p>\n    </footer>\n</body>\n</html>"
+        }
+      },
+      "updated_at": 1770740469.894333
+    }
+  },
+  "global_knowledge": []
+}

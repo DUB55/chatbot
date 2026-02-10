@@ -290,7 +290,7 @@ class ChatCache:
 chat_cache = ChatCache()
 
 # ---- Chat streaming helper ----
-async def stream_chat_completion(messages, model, web_search=False, personality_name="general", image_data=None, force_roulette=False):
+async def stream_chat_completion(messages, model, web_search=False, personality_name="general", image_data=None, force_roulette=False, session_id="default"):
     start_time = time.time()
     
     # Check Cache
@@ -501,7 +501,6 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
         
         # UPDATE PROJECT STATE (for AI Web App Builder)
         if personality_name == "coder" and file_actions:
-            session_id = getattr(messages, 'session_id', 'default') # We'll pass this in
             for file in file_actions:
                 project_manager.update_file(session_id, file.path, file.content)
             logger.info(f"Updated project state for session {session_id} with {len(file_actions)} files")
@@ -586,9 +585,6 @@ async def chatbot_response(user_input: UserInput, request: Request):
         # Build messages with history (memory)
         messages = [{"role": "system", "content": combined_system_prompt}]
         
-        # Attach session_id for project management
-        setattr(messages, 'session_id', user_input.session_id)
-        
         # Voeg history toe van de frontend
         if user_input.history:
             for msg in user_input.history:
@@ -645,7 +641,8 @@ async def chatbot_response(user_input: UserInput, request: Request):
                 user_input.web_search, 
                 personality, 
                 user_input.image,
-                getattr(user_input, 'force_roulette', False)
+                getattr(user_input, 'force_roulette', False),
+                user_input.session_id
             ),
             media_type="text/event-stream",
             headers={
