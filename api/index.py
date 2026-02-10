@@ -66,17 +66,28 @@ async def fallback_pollinations_ai(messages):
                 yield f"data: {json.dumps({'type': 'metadata', 'model': 'pollinations-fallback', 'status': 'fallback'})}\n\n"
                 
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data_str = line[6:]
-                        if data_str.strip() == "[DONE]":
-                            break
-                        try:
-                            chunk_data = json.loads(data_str)
+                    if not line.strip():
+                        continue
+                        
+                    # Als de provider direct tekst stuurt zonder "data: " prefix
+                    clean_line = line.strip()
+                    if clean_line.startswith("data: "):
+                        clean_line = clean_line[6:]
+                    
+                    if clean_line == "[DONE]":
+                        break
+                        
+                    try:
+                        if clean_line.startswith('{'):
+                            chunk_data = json.loads(clean_line)
                             content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
                                 yield f"data: {json.dumps({'content': content})}\n\n"
-                        except:
-                            continue
+                        else:
+                            # Directe tekst
+                            yield f"data: {json.dumps({'content': clean_line})}\n\n"
+                    except:
+                        yield f"data: {json.dumps({'content': clean_line})}\n\n"
                 
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
     except Exception as e:
