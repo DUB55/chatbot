@@ -10,18 +10,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# G4F Import (Lazy & Minimal)
-def get_g4f():
-    try:
-        import g4f
-        # Forceer g4f om /tmp te gebruiken voor cache op Vercel
-        os.environ['G4F_CACHE_DIR'] = '/tmp/.g4f_cache'
-        return g4f
-    except Exception as e:
-        logger.error(f"Lazy G4F Import Error: {e}")
-        return None
-
-# Uitgebreide logging
+# Configureer logging voor debugging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -38,80 +27,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-async def g4f_ai_stream(user_query: str, history: list) -> AsyncGenerator[str, None]:
-    """Herstelde G4F AI functionaliteit (Lichtgewicht & Veilig)."""
+async def pollinations_ai_stream(user_query: str, history: list) -> AsyncGenerator[str, None]:
+    """Pollinations AI - Altijd werkend, geen dependencies."""
     try:
-        g4f_lib = get_g4f()
-        if not g4f_lib:
-            logger.warning("G4F not available, skipping to fallback.")
-            async for chunk in simple_pollinations_stream(user_query):
-                yield chunk
-            return
-
-        messages = [{"role": "system", "content": "You are DUB5 AI, a helpful assistant. Answer in Dutch."}]
-        for m in history[-5:]: 
-            if isinstance(m, dict) and "role" in m:
-                messages.append({"role": m["role"], "content": m.get("content", "")})
+        logger.info(f"--- DEBUG: Pollinations AI Start ---")
+        logger.info(f"DEBUG: User query: {user_query[:100]}")
         
-        messages.append({"role": "user", "content": user_query})
-
-        # Gebruik een stabiele provider die GEEN extra dependencies nodig heeft
-        provider = g4f_lib.Provider.Blackbox 
-
-        logger.info(f"Connecting to G4F (Provider: {provider.__name__})...")
-        yield f"data: {json.dumps({'type': 'metadata', 'model': 'g4f-minimal'})}\n\n"
-
-        # G4F Async Iterator met timeout
-        try:
-            response = await g4f_lib.ChatCompletion.create_async(
-                model=g4f_lib.models.default,
-                messages=messages,
-                provider=provider,
-                stream=True
-            )
-
-            async for chunk in response:
-                if chunk:
-                    yield f"data: {json.dumps({'content': chunk})}\n\n"
-            
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            logger.info("G4F Stream completed")
-        except Exception as inner_e:
-            logger.error(f"G4F Stream inner error: {inner_e}")
-            raise inner_e
-
-    except Exception as e:
-        logger.error(f"G4F Global Error: {e}")
-        logger.info("Falling back to Pollinations due to error...")
-        async for chunk in simple_pollinations_stream(user_query):
-            yield chunk
-
-async def simple_pollinations_stream(user_query: str) -> AsyncGenerator[str, None]:
-    """Stabiele Pollinations Fallback (Gegarandeerd antwoord)."""
-    try:
-        logger.info("--- DEBUG: Pollinations stream start ---")
+        # Bouw de URL met de juiste parameters
         encoded_query = urllib.parse.quote(user_query)
-        # Gebruik de simpele GET interface die altijd werkt
-        url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system=You%20are%20DUB5%20AI"
-        logger.info(f"DEBUG: Pollinations URL: {url[:200]}")
-        # Forceer onmiddellijke start van SSE zodat headers worden verzonden
+        url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system=You%20are%20DUB5%20AI%2C%20a%20helpful%20assistant.%20Answer%20in%20Dutch."
+        
+        logger.info(f"DEBUG: Pollinations URL: {url}")
+        
+        # Start meteen met SSE streaming
         yield f"data: {json.dumps({'type': 'start', 'source': 'pollinations'})}\n\n"
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("GET", url) as response:
+                logger.info(f"DEBUG: Pollinations response status: {response.status_code}")
+                
                 if response.status_code == 200:
-                    yield f"data: {json.dumps({'type': 'metadata', 'model': 'pollinations-fallback'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'metadata', 'model': 'pollinations'})}\n\n"
+                    
+                    # Stream de response in chunks
+                    total_chars = 0
                     async for chunk in response.aiter_text():
                         if chunk:
-                            logger.info(f"DEBUG: Pollinations chunk length: {len(chunk)}")
+                            chunk_len = len(chunk)
+                            total_chars += chunk_len
+                            logger.info(f"DEBUG: Received chunk of {chunk_len} chars (total: {total_chars})")
                             yield f"data: {json.dumps({'content': chunk})}\n\n"
+                    
+                    logger.info(f"DEBUG: Streaming completed, total chars: {total_chars}")
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 else:
-                    logger.error(f"DEBUG: Pollinations HTTP error: {response.status_code}")
-                    yield f"data: {json.dumps({'error': f'AI Fallback Error: {response.status_code}'})}\n\n"
+                    error_msg = f"Pollinations HTTP error: {response.status_code}"
+                    logger.error(f"DEBUG: {error_msg}")
+                    yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                    
     except Exception as e:
-        logger.error(f"Pollinations Fallback Fatal: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        error_msg = f"Pollinations Fatal Error: {str(e)}"
+        logger.error(f"DEBUG: {error_msg}")
+        yield f"data: {json.dumps({'error': error_msg})}\n\n"
 
 @app.get("/api/debug")
 async def debug_info():
@@ -120,13 +77,13 @@ async def debug_info():
         "python_version": sys.version,
         "cwd": os.getcwd(),
         "env_vars": {k: "SET" for k in os.environ.keys() if "KEY" not in k.upper() and "TOKEN" not in k.upper()},
-        "g4f_available": get_g4f() is not None,
+        "backend_type": "pollinations_only",
         "tmp_writable": os.access('/tmp', os.W_OK) if os.path.exists('/tmp') else False
     }
 
 @app.get("/")
 async def root():
-    return {"status": "online", "g4f": (get_g4f() is not None)}
+    return {"status": "online", "backend": "pollinations_ai", "version": "1.3.0"}
 
 @app.get("/api/library/list")
 @app.get("/library/list")
@@ -146,45 +103,43 @@ async def ping():
 async def chatbot_proxy(request: Request):
     logger.info("--- DEBUG: Backend Chatbot Request Started ---")
     try:
-        # Log headers
-        headers = dict(request.headers)
-        logger.info(f"DEBUG: Headers: {json.dumps(headers)}")
-
+        # Parse request body
         raw_body = await request.body()
-        logger.info(f"DEBUG: Raw Body Length: {len(raw_body)}")
+        logger.info(f"DEBUG: Raw body length: {len(raw_body)}")
         
         try:
             body = json.loads(raw_body.decode('utf-8')) if raw_body else {}
-            logger.info(f"DEBUG: Body Parsed: {json.dumps(body)[:200]}...")
+            logger.info(f"DEBUG: Parsed body: {json.dumps(body)[:200]}...")
         except Exception as e:
-            logger.error(f"DEBUG: JSON Parse Error: {e}")
+            logger.error(f"DEBUG: JSON parse error: {e}")
             body = {}
-
+        
         user_input = body.get("input", "Hallo")
         history = body.get("history", [])
         
-        logger.info(f"DEBUG: Selected input: {user_input[:50]}")
+        logger.info(f"DEBUG: User input: '{user_input[:50]}' (length: {len(user_input)})")
+        logger.info(f"DEBUG: History length: {len(history)}")
         
         return StreamingResponse(
-            g4f_ai_stream(user_input, history),
+            pollinations_ai_stream(user_input, history),
             media_type="text/event-stream",
             headers={
                 "X-Accel-Buffering": "no",
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Debug-Status": "streaming-started"
+                "X-Debug-Backend": "pollinations"
             }
         )
+        
     except Exception as e:
-        logger.error(f"DEBUG: Fatal Chatbot Proxy Error: {e}", exc_info=True)
+        logger.error(f"DEBUG: Fatal error in chatbot_proxy: {e}", exc_info=True)
         return JSONResponse(
-            status_code=500, 
+            status_code=500,
             content={
-                "error": "Backend Fatal Crash", 
+                "error": "Backend Fatal Crash",
                 "detail": str(e),
                 "debug_info": "Check server logs for stacktrace"
             }
         )
 
-# Vercel entry point
-app = app
+# Vercel entry point - gebruik de bestaande app
