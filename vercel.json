@@ -3,23 +3,27 @@
   "rewrites": [
     {
       "source": "/api/chatbot",
-      "destination": "api/index.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/chatbot",
-      "destination": "api/index.py"
+      "destination": "/api/index.py"
     },
     {
-      "source": "/api/system-status",
-      "destination": "api/index.py"
+      "source": "/api/library/list",
+      "destination": "/api/index.py"
     },
     {
-      "source": "/status",
-      "destination": "api/index.py"
+      "source": "/favicon.ico",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/api/ping",
+      "destination": "/api/index.py"
     },
     {
       "source": "/api/(.*)",
-      "destination": "api/index.py"
+      "destination": "/api/index.py"
     },
     {
       "source": "/",

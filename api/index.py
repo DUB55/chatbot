@@ -98,9 +98,18 @@ async def simple_pollinations_stream(user_query: str) -> AsyncGenerator[str, Non
 async def root():
     return {"status": "online", "g4f": G4F_AVAILABLE}
 
+@app.get("/api/library/list")
+@app.get("/library/list")
+async def list_libraries():
+    return JSONResponse(content={"libraries": []})
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
+
 @app.get("/api/ping")
 async def ping():
-    return {"ping": "pong"}
+    return JSONResponse(content={"ping": "pong"})
 
 @app.post("/api/chatbot")
 @app.post("/chatbot")
