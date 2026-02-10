@@ -2,21 +2,26 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/chatbot.html"
+    },
+    {
       "source": "/api/chatbot",
       "destination": "api/chatbot.py"
     },
     {
       "source": "/api/image",
-      "destination": "api/image.py"
+      "destination": "api/chatbot.py"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "api/chatbot.py"
     }
   ],
   "functions": {
     "api/chatbot.py": {
       "maxDuration": 60,
       "memory": 1024
-    },
-    "api/image.py": {
-      "maxDuration": 60
     }
   }
 }

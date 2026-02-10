@@ -3,7 +3,11 @@ import json
 import sys
 import httpx
 import random
+import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional, List, Dict, Any, AsyncGenerator
 
 # Voeg de huidige map toe aan sys.path voor imports
 current_dir = Path(__file__).parent.absolute()
@@ -38,7 +42,7 @@ if hasattr(g4f, 'Provider'):
         if not hasattr(g4f.Provider, prov_name):
             setattr(g4f.Provider, prov_name, None)
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
@@ -182,10 +186,12 @@ Your mission is to provide the most advanced AI experience possible, reflecting 
 
 app = FastAPI()
 client = Client()
+executor = ThreadPoolExecutor()
 
-# Bepaal de pad naar de chatbot.html (één map omhoog vanuit 'dir')
+# Bepaal de pad naar de chatbot.html (één map omhoog vanuit 'api')
 BASE_DIR = Path(__file__).parent.parent
 HTML_PATH = BASE_DIR / "chatbot.html"
+IMAGE_HTML_PATH = BASE_DIR / "image.html"
 
 # ---- Configure CORS ----
 app.add_middleware(
@@ -214,6 +220,12 @@ class UserInput(BaseModel):
     image: Optional[str] = None # Base64 encoded image
     session_id: Optional[str] = "default"
     library_ids: Optional[List[str]] = [] # IDs van opgeslagen leermateriaal
+
+class ImageInput(BaseModel):
+    input: str
+    model: Optional[str] = "flux"
+    width: Optional[int] = 1024
+    height: Optional[int] = 1024
 
 # ---- Library API Endpoints ----
 class LibraryUpload(BaseModel):
@@ -671,14 +683,67 @@ async def serve_frontend():
         return FileResponse(HTML_PATH)
     return {"status": "online", "message": "DUB5 AI Backend is running"}
 
+@app.get("/chatbot.html")
+async def serve_chatbot_explicit():
+    if HTML_PATH.exists():
+        return FileResponse(HTML_PATH)
+    raise HTTPException(status_code=404, detail="chatbot.html niet gevonden")
+
+@app.get("/image.html")
+async def serve_image_frontend():
+    if IMAGE_HTML_PATH.exists():
+        return FileResponse(IMAGE_HTML_PATH)
+    raise HTTPException(status_code=404, detail="image.html niet gevonden")
+
+@app.get("/favicon.ico")
+async def favicon():
+    # Stilleer de favicon 404 in de console
+    return Response(status_code=204)
+
+@app.get("/api/library/list")
+async def list_library(user_id: str = "default_user"):
+    """Geeft een lijst van alle documenten in de bibliotheek."""
+    try:
+        user_libs = db.data["libraries"].get(user_id, {})
+        return {
+            "libraries": [
+                {"id": lib_id, "title": lib.get("title", "Untitled"), "created_at": lib.get("created_at")}
+                for lib_id, lib in user_libs.items()
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/image")
+async def generate_image_api(image_input: ImageInput):
+    """Endpoint voor afbeelding generatie (gebruikt door image.html)."""
+    try:
+        def sync_gen():
+            response = client.images.generate(
+                model=image_input.model,
+                prompt=image_input.input,
+                response_format="url"
+            )
+            return response.data[0].url
+
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(executor, sync_gen)
+        return {"url": url}
+    except Exception as e:
+        logger.error(f"Image generation error: {e}")
+        # Fallback naar Pollinations direct URL als G4F faalt
+        encoded_prompt = image_input.input.replace(" ", "%20")
+        fallback_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={image_input.width}&height={image_input.height}&nologo=true"
+        return {"url": fallback_url}
+
 @app.get("/health")
 async def health_check():
     # Basis health check voor de backend
     return {
         "status": "ok",
         "timestamp": time.time(),
-        "version": "1.0.0",
-        "providers": len(STABLE_PROVIDERS)
+        "version": "1.0.1",
+        "providers": len(STABLE_PROVIDERS) if 'STABLE_PROVIDERS' in globals() else 0
     }
 
 @app.get("/api/admin/stats")
