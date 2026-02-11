@@ -1250,6 +1250,17 @@
               model: model
             });
             
+            let historyForBackend = chat.messages;
+            if (isRetry) {
+              let lastUserIndex = -1;
+              for (let i = chat.messages.length - 1; i >= 0; i--) {
+                if (chat.messages[i].role === 'user') { lastUserIndex = i; break; }
+              }
+              if (lastUserIndex > -1) {
+                historyForBackend = chat.messages.slice(0, lastUserIndex);
+              }
+            }
+            
             const response = await fetch('/api/chatbot', {
               method: 'POST',
               headers: { 
@@ -1258,7 +1269,7 @@
               },
               body: JSON.stringify({
                 input: promptText,
-                history: chat.messages,
+                history: historyForBackend,
                 thinking_mode: activeMode,
                 personality: personality,
                 model: model
@@ -1318,6 +1329,8 @@
 
             let sseBuffer = '';
             let shouldStop = false;
+            let streamBuffer = '';
+            msgDiv._files = [];
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
@@ -1355,9 +1368,20 @@
                       (data && data.delta && data.delta.reasoning_content) ||
                       (data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.reasoning_content);
                     if (contentChunk) {
-                      assistantMsg += contentChunk;
-                      msgDiv.setAttribute('data-raw-content', assistantMsg);
-                      contentDiv.innerHTML = formatText(assistantMsg);
+                      streamBuffer += contentChunk;
+                      const { text, files } = extractFilesFromStream(streamBuffer);
+                      streamBuffer = text;
+                      if (files.length) {
+                        msgDiv._files.push(...files);
+                        msgDiv.setAttribute('data-files', JSON.stringify(msgDiv._files));
+                      }
+                      let displayText = streamBuffer;
+                      if (personality === 'coder') {
+                        displayText = displayText.replace(/```[\s\S]*?```/g, '');
+                      }
+                      assistantMsg = displayText;
+                      msgDiv.setAttribute('data-raw-content', displayText);
+                      contentDiv.innerHTML = formatText(displayText);
                       typesetContent(contentDiv);
                       scrollToBottom();
                     }
@@ -1374,9 +1398,20 @@
                     }
                   } catch (e) {
                     if (jsonStr && !jsonStr.startsWith('{')) {
-                      assistantMsg += jsonStr;
-                      msgDiv.setAttribute('data-raw-content', assistantMsg);
-                      contentDiv.innerHTML = formatText(assistantMsg);
+                      streamBuffer += jsonStr;
+                      const { text, files } = extractFilesFromStream(streamBuffer);
+                      streamBuffer = text;
+                      if (files.length) {
+                        msgDiv._files.push(...files);
+                        msgDiv.setAttribute('data-files', JSON.stringify(msgDiv._files));
+                      }
+                      let displayText = streamBuffer;
+                      if (personality === 'coder') {
+                        displayText = displayText.replace(/```[\s\S]*?```/g, '');
+                      }
+                      assistantMsg = displayText;
+                      msgDiv.setAttribute('data-raw-content', displayText);
+                      contentDiv.innerHTML = formatText(displayText);
                       typesetContent(contentDiv);
                       scrollToBottom();
                     }
@@ -1387,8 +1422,118 @@
               if (shouldStop) break;
             }
             
-            addMessageToChat('assistant', assistantMsg);
-            addMessageActions(msgDiv, assistantMsg);
+            let combinedMsg = assistantMsg;
+            let combinedBuffer = streamBuffer;
+            try {
+              let loops = 0;
+              const maxLoops = 3;
+              while (shouldAutoContinue(combinedMsg) && loops < maxLoops) {
+                const continuationInput = "Continue exactly from where you stopped. Do not repeat anything. Keep the same formatting.";
+                const contHistory = [...historyForBackend, { role: 'assistant', content: combinedMsg }];
+                const contRes = await fetch('/api/chatbot', {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'X-Admin-Token': adminKey || ''
+                  },
+                  body: JSON.stringify({
+                    input: continuationInput,
+                    history: contHistory,
+                    thinking_mode: activeMode,
+                    personality: personality,
+                    model: model
+                  })
+                });
+                const contReader = contRes.body.getReader();
+                const contDecoder = new TextDecoder();
+                let contBuffer = '';
+                let contStop = false;
+                while (true) {
+                  const { done, value } = await contReader.read();
+                  if (done) break;
+                  contBuffer += contDecoder.decode(value, { stream: true });
+                  const events = contBuffer.split('\n\n');
+                  contBuffer = events.pop() || '';
+                  for (const evt of events) {
+                    const lines = evt.split('\n');
+                    for (const line of lines) {
+                      if (line.startsWith('data:')) {
+                        const payload = line.slice(6).trim();
+                        if (payload === '[DONE]') { contStop = true; break; }
+                        if (!payload) continue;
+                        try {
+                          const data = JSON.parse(payload);
+                          const chunk =
+                            (data && data.content) ||
+                            (data && data.delta && data.delta.content) ||
+                            (data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content);
+                          if (chunk) {
+                            combinedBuffer += chunk;
+                            const { text, files } = extractFilesFromStream(combinedBuffer);
+                            combinedBuffer = text;
+                            if (files.length) {
+                              msgDiv._files.push(...files);
+                              msgDiv.setAttribute('data-files', JSON.stringify(msgDiv._files));
+                            }
+                            let displayText = combinedBuffer;
+                            if (personality === 'coder') {
+                              displayText = displayText.replace(/```[\s\S]*?```/g, '');
+                            }
+                            combinedMsg = displayText;
+                            msgDiv.setAttribute('data-raw-content', displayText);
+                            contentDiv.innerHTML = formatText(displayText);
+                            typesetContent(contentDiv);
+                            scrollToBottom();
+                          }
+                          const rchunk =
+                            (data && data.reasoning) ||
+                            (data && data.reasoning_content) ||
+                            (data && data.delta && data.delta.reasoning_content) ||
+                            (data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.reasoning_content);
+                          if (rchunk && reasoningDiv) {
+                            reasoningMsg += rchunk;
+                            msgDiv.setAttribute('data-reasoning-content', reasoningMsg);
+                            reasoningDiv.innerHTML = formatText(reasoningMsg);
+                            typesetContent(reasoningDiv);
+                          }
+                        } catch {
+                          combinedBuffer += payload;
+                          const { text, files } = extractFilesFromStream(combinedBuffer);
+                          combinedBuffer = text;
+                          if (files.length) {
+                            msgDiv._files.push(...files);
+                            msgDiv.setAttribute('data-files', JSON.stringify(msgDiv._files));
+                          }
+                          let displayText = combinedBuffer;
+                          if (personality === 'coder') {
+                            displayText = displayText.replace(/```[\s\S]*?```/g, '');
+                          }
+                          combinedMsg = displayText;
+                          msgDiv.setAttribute('data-raw-content', displayText);
+                          contentDiv.innerHTML = formatText(displayText);
+                          typesetContent(contentDiv);
+                          scrollToBottom();
+                        }
+                      }
+                    }
+                    if (contStop) break;
+                  }
+                  if (contStop) break;
+                }
+                loops++;
+              }
+            } catch (e) {
+              console.warn('Auto-continue failed:', e);
+            }
+            
+            addMessageToChat('assistant', combinedMsg);
+            addMessageActions(msgDiv, combinedMsg);
+            if (window.pendingRetryOldResponses && window.pendingRetryOldResponses.length > 0) {
+              const versions = [...window.pendingRetryOldResponses, combinedMsg];
+              msgDiv.setAttribute('data-versions', JSON.stringify(versions));
+              msgDiv.setAttribute('data-version-index', String(versions.length - 1));
+              window.pendingRetryOldResponses = [];
+            }
 
           } catch (err) {
           removeTyping(typingId);
@@ -1444,6 +1589,15 @@
         const actions = document.createElement('div');
         actions.className = 'message-actions';
         actions.innerHTML = `
+          <button class="action-btn files-btn" title="View generated files" onclick="toggleFiles(this)">
+            <i class="fa-solid fa-file-code"></i>
+          </button>
+          <button class="action-btn prev-version-btn" title="Previous version" onclick="prevVersion(this)">
+            <i class="fa-solid fa-chevron-left"></i>
+          </button>
+          <button class="action-btn next-version-btn" title="Next version" onclick="nextVersion(this)">
+            <i class="fa-solid fa-chevron-right"></i>
+          </button>
           <button class="action-btn copy-btn" title="Copy response" onclick="handleCopyResponse(this)">
             <i class="fa-regular fa-copy"></i>
           </button>
@@ -1529,6 +1683,14 @@
         if (lastUserIndex !== -1) {
           const lastUserText = chat.messages[lastUserIndex].content;
           
+          const oldResponses = [];
+          for (let i = lastUserIndex + 1; i < chat.messages.length; i++) {
+            if (chat.messages[i].role === 'assistant') {
+              oldResponses.push(chat.messages[i].content);
+            }
+          }
+          window.pendingRetryOldResponses = oldResponses;
+          
           // Remove all messages after the last user message
           chat.messages = chat.messages.slice(0, lastUserIndex + 1);
           
@@ -1540,6 +1702,91 @@
           document.getElementById('userInput').value = lastUserText;
           handleSendMessage(true);
         }
+      }
+      
+      function prevVersion(btn) {
+        const msg = btn.closest('.message');
+        const contentDiv = msg.querySelector('.message-content');
+        const versionsStr = msg.getAttribute('data-versions') || '[]';
+        const versions = JSON.parse(versionsStr);
+        if (!versions || versions.length < 2) return;
+        let idx = parseInt(msg.getAttribute('data-version-index') || (versions.length - 1), 10);
+        idx = Math.max(0, idx - 1);
+        msg.setAttribute('data-version-index', String(idx));
+        msg.setAttribute('data-raw-content', versions[idx]);
+        contentDiv.innerHTML = formatText(versions[idx]);
+        typesetContent(contentDiv);
+        scrollToBottom();
+      }
+      
+      function nextVersion(btn) {
+        const msg = btn.closest('.message');
+        const contentDiv = msg.querySelector('.message-content');
+        const versionsStr = msg.getAttribute('data-versions') || '[]';
+        const versions = JSON.parse(versionsStr);
+        if (!versions || versions.length < 2) return;
+        let idx = parseInt(msg.getAttribute('data-version-index') || (versions.length - 1), 10);
+        idx = Math.min(versions.length - 1, idx + 1);
+        msg.setAttribute('data-version-index', String(idx));
+        msg.setAttribute('data-raw-content', versions[idx]);
+        contentDiv.innerHTML = formatText(versions[idx]);
+        typesetContent(contentDiv);
+        scrollToBottom();
+      }
+      
+      function extractFilesFromStream(bufferText) {
+        const files = [];
+        let text = bufferText;
+        while (true) {
+          const startIdx = text.indexOf('BEGIN_FILE:');
+          if (startIdx === -1) break;
+          const endIdx = text.indexOf('END_FILE', startIdx);
+          if (endIdx === -1) break;
+          const before = text.slice(0, startIdx);
+          const block = text.slice(startIdx, endIdx + 'END_FILE'.length);
+          const after = text.slice(endIdx + 'END_FILE'.length);
+          const pathLineEnd = block.indexOf('\n');
+          let relPath = block.slice('BEGIN_FILE:'.length, pathLineEnd).trim();
+          const content = block.slice(pathLineEnd + 1, block.length - 'END_FILE'.length).replace(/^\n+|\n+$/g, '');
+          if (relPath && content) {
+            files.push({ path: relPath, content });
+          }
+          text = before + after;
+        }
+        return { text, files };
+      }
+      
+      function toggleFiles(btn) {
+        const msg = btn.closest('.message');
+        const filesStr = msg.getAttribute('data-files') || '[]';
+        let files;
+        try { files = JSON.parse(filesStr); } catch { files = []; }
+        if (!files.length) {
+          showAlert('Files', 'No generated files in this message.');
+          return;
+        }
+        let panel = msg.querySelector('.files-panel');
+        if (!panel) {
+          panel = document.createElement('div');
+          panel.className = 'files-panel';
+          panel.style.cssText = 'margin-top:10px;border:1px solid var(--border-color);border-radius:8px;background:rgba(255,255,255,0.03);padding:10px;';
+          msg.appendChild(panel);
+        }
+        panel.innerHTML = files.map((f, i) => {
+          const safePath = f.path.replace(/[<>]/g, '');
+          return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                    <div style="flex:1;"><strong>${i+1}.</strong> ${safePath}</div>
+                    <button class="action-btn" onclick="copyText(\`${safePath.replace(/`/g,'\\`')}\`)"><i class="fa-regular fa-copy"></i> Path</button>
+                    <button class="action-btn" onclick="copyText(\`${(f.content || '').replace(/`/g,'\\`')}\`)"><i class="fa-regular fa-copy"></i> Content</button>
+                  </div>`;
+        }).join('');
+      }
+      
+      function shouldAutoContinue(text) {
+        if (!text) return false;
+        const openFence = ((text.match(/```/g) || []).length % 2) === 1;
+        const endsIncomplete = /[\w,:;]$/.test(text.trim());
+        return openFence || endsIncomplete;
       }
 
       function formatText(text) {
@@ -1557,6 +1804,21 @@
           .replace(/^\s*at\s*$/gm, '')
           .replace(/\s+at\s*\.\s*$/g, '')
           .replace(/https:\/\/image\.pollinations\.ai\/prompt\/[^\s)]+/gi, '');
+
+        const likelyHTML = /<\s*(html|head|body|div|span|style|script|link|meta|img|a|p|h[1-6]|ul|ol|li|table|thead|tbody|tr|td|th|form|input|button)\b/i.test(cleaned);
+        const hasCodeFence = /```/.test(cleaned);
+        if (likelyHTML && !hasCodeFence) {
+          const highlighted = hljs.highlightAuto(cleaned, ['html', 'xml']).value;
+          return `<div class="code-container">
+                    <div class="code-header">
+                      <span>html</span>
+                      <div>
+                        <button onclick="copyCode(this)">Copy</button>
+                      </div>
+                    </div>
+                    <pre><code class="hljs html">${highlighted}</code></pre>
+                  </div>`;
+        }
 
         const convertTables = (md) => {
           const lines = md.split('\n');
