@@ -998,6 +998,15 @@
         const themeSelect = document.getElementById('themeSelect');
         if (themeSelect) themeSelect.value = savedTheme;
 
+        const savedPersonality = localStorage.getItem('dub5_personality') || 'general';
+        const personalitySelect = document.getElementById('personalitySelect');
+        if (personalitySelect) {
+          personalitySelect.value = savedPersonality;
+          personalitySelect.addEventListener('change', (e) => {
+            localStorage.setItem('dub5_personality', e.target.value);
+          });
+        }
+
         generateStars();
         renderProjectList();
         renderChatList();
@@ -1135,7 +1144,10 @@
         
         // Auto-switch to Coder personality for new projects
         const personalitySelect = document.getElementById('personalitySelect');
-        if (personalitySelect) personalitySelect.value = 'coder';
+        if (personalitySelect) {
+          personalitySelect.value = 'coder';
+          localStorage.setItem('dub5_personality', 'coder'); // Persist the change
+        }
         
         renderProjectList();
         selectProject(id);
@@ -1143,6 +1155,12 @@
 
       function selectProject(id) {
         currentProjectId = id;
+        // Ensure coder personality is active when a project is selected
+        const personalitySelect = document.getElementById('personalitySelect');
+        if (personalitySelect && personalitySelect.value !== 'coder') {
+          personalitySelect.value = 'coder';
+          localStorage.setItem('dub5_personality', 'coder');
+        }
         renderProjectList();
         renderChatList();
         startNewChat();
