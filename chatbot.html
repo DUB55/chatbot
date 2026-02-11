@@ -13,6 +13,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$','$$'], ['\\[','\\]']]
+        },
+        svg: { fontCache: 'global' }
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
     <!-- Font Awesome for Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
@@ -1199,9 +1209,11 @@
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let assistantMsg = '';
+            let reasoningMsg = '';
             let typingRemoved = false;
             const msgDiv = addMessageToUI('assistant', '');
             const contentDiv = msgDiv.querySelector('.message-content');
+            const reasoningDiv = msgDiv.querySelector('.reasoning-content');
 
             let sseBuffer = '';
             let shouldStop = false;
@@ -1232,15 +1244,27 @@
                 for (const jsonStr of payloads) {
                   try {
                     const data = JSON.parse(jsonStr);
-                    const chunkContent =
-                      (data && (data.content || data.reasoning_content)) ||
-                      (data && data.delta && (data.delta.content || data.delta.reasoning_content)) ||
-                      (data && data.choices && data.choices[0] && data.choices[0].delta && (data.choices[0].delta.content || data.choices[0].delta.reasoning_content));
-                    if (chunkContent) {
-                      assistantMsg += chunkContent;
+                    const contentChunk =
+                      (data && data.content) ||
+                      (data && data.delta && data.delta.content) ||
+                      (data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content);
+                    const reasoningChunk =
+                      (data && data.reasoning) ||
+                      (data && data.reasoning_content) ||
+                      (data && data.delta && data.delta.reasoning_content) ||
+                      (data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.reasoning_content);
+                    if (contentChunk) {
+                      assistantMsg += contentChunk;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
+                      typesetContent(contentDiv);
                       scrollToBottom();
+                    }
+                    if (reasoningChunk && reasoningDiv) {
+                      reasoningMsg += reasoningChunk;
+                      msgDiv.setAttribute('data-reasoning-content', reasoningMsg);
+                      reasoningDiv.innerHTML = formatText(reasoningMsg);
+                      typesetContent(reasoningDiv);
                     }
                     if (data && data.error) {
                       showAlert('Error', data.error);
@@ -1252,6 +1276,7 @@
                       assistantMsg += jsonStr;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
+                      typesetContent(contentDiv);
                       scrollToBottom();
                     }
                   }
@@ -1304,7 +1329,8 @@
           msgDiv.innerHTML = `${fileHtml}<div class="message-bubble">${content}</div>`;
         } else {
           msgDiv.setAttribute('data-raw-content', content);
-          msgDiv.innerHTML = `<div class="message-content">${formatText(content)}</div>`;
+          msgDiv.innerHTML = `<div class="message-content">${formatText(content)}</div><div class="reasoning-content hidden" style="margin-top: 1rem; padding: 0.8rem; border: 1px dashed var(--border-color); border-radius: 0.8rem; background: rgba(255,255,255,0.03)"></div>`;
+          typesetContent(msgDiv.querySelector('.message-content'));
           if (content) addMessageActions(msgDiv, content);
         }
         
@@ -1323,6 +1349,9 @@
           <button class="action-btn retry-btn" title="Retry" onclick="retryMessage()">
             <i class="fa-solid fa-rotate-right"></i>
           </button>
+          <button class="action-btn thinking-btn" title="Show/Hide Thinking" onclick="toggleThinking(this)">
+            <i class="fa-solid fa-brain"></i>
+          </button>
           <button class="action-btn feedback-btn" onclick="toggleFeedback(this, 'up')">
             <i class="fa-regular fa-thumbs-up"></i>
           </button>
@@ -1331,6 +1360,14 @@
           </button>
         `;
         msgDiv.appendChild(actions);
+      }
+      
+      function toggleThinking(btn) {
+        const msg = btn.closest('.message');
+        const thinking = msg.querySelector('.reasoning-content');
+        if (!thinking) return;
+        const isHidden = thinking.classList.contains('hidden');
+        if (isHidden) thinking.classList.remove('hidden'); else thinking.classList.add('hidden');
       }
 
       function handleCopyResponse(btn) {
@@ -1457,6 +1494,12 @@
           });
 
         return formatted;
+      }
+      
+      function typesetContent(el) {
+        if (window.MathJax && MathJax.typesetPromise) {
+          MathJax.typesetPromise([el]).catch(() => {});
+        }
       }
 
       function copyCode(btn) {

@@ -123,32 +123,32 @@ async def chatbot_simple(request: Request):
                                                 if payload:
                                                     payloads.append(payload)
                                         for payload in payloads:
-                                            text_chunk = ""
+                                            content_text = ""
+                                            reasoning_text = ""
                                             try:
                                                 data = json.loads(payload)
-                                                text_chunk = (
+                                                content_text = (
                                                     data.get("content")
+                                                    or (data.get("delta") or {}).get("content")
+                                                    or (
+                                                        ((data.get("choices") or [{}])[0].get("delta") or {}).get("content")
+                                                    )
+                                                ) or ""
+                                                reasoning_text = (
+                                                    data.get("reasoning")
                                                     or data.get("reasoning_content")
+                                                    or (data.get("delta") or {}).get("reasoning_content")
                                                     or (
-                                                        (data.get("delta") or {}).get("content")
-                                                        or (data.get("delta") or {}).get("reasoning_content")
-                                                    )
-                                                    or (
-                                                        (
-                                                            (data.get("choices") or [{}])[0].get("delta") or {}
-                                                        ).get("content")
-                                                    )
-                                                    or (
-                                                        (
-                                                            (data.get("choices") or [{}])[0].get("delta") or {}
-                                                        ).get("reasoning_content")
+                                                        ((data.get("choices") or [{}])[0].get("delta") or {}).get("reasoning_content")
                                                     )
                                                 ) or ""
                                             except Exception:
                                                 if not payload.startswith("{"):
-                                                    text_chunk = payload
-                                            if text_chunk:
-                                                yield f"data: {json.dumps({'content': text_chunk})}\n\n"
+                                                    content_text = payload
+                                            if content_text:
+                                                yield f"data: {json.dumps({'content': content_text})}\n\n"
+                                            if reasoning_text:
+                                                yield f"data: {json.dumps({'reasoning': reasoning_text})}\n\n"
                                         if done_event:
                                             yield "data: [DONE]\n\n"
                                             return
