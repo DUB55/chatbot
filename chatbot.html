@@ -1203,56 +1203,62 @@
             const msgDiv = addMessageToUI('assistant', '');
             const contentDiv = msgDiv.querySelector('.message-content');
 
+            let sseBuffer = '';
+            let shouldStop = false;
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              
               if (!typingRemoved) {
                 removeTyping(typingId);
                 typingRemoved = true;
               }
-
-              const chunk = decoder.decode(value);
-              console.log('--- DEBUG: Stream chunk received ---');
-              console.log('Chunk length:', value?.length || 0);
-              console.log('Chunk preview:', chunk.substring(0, 200));
-              const lines = chunk.split('\n');
-              console.log('Lines in chunk:', lines.length);
-              for (const line of lines) {
-                if (line.trim().startsWith('data: ')) {
-                  const jsonStr = line.trim().substring(6);
-                  if (!jsonStr) continue;
-                  if (jsonStr === '[DONE]') break;
-                  
+              sseBuffer += decoder.decode(value, { stream: true });
+              const events = sseBuffer.split('\n\n');
+              sseBuffer = events.pop() || '';
+              for (const evt of events) {
+                const lines = evt.split('\n');
+                const payloads = [];
+                for (const line of lines) {
+                  const t = line.trim();
+                  if (t.startsWith('data:')) {
+                    const payload = t.substring(5).trim();
+                    if (payload === '[DONE]') {
+                      shouldStop = true;
+                      continue;
+                    }
+                    if (payload) payloads.push(payload);
+                  }
+                }
+                for (const jsonStr of payloads) {
                   try {
                     const data = JSON.parse(jsonStr);
-                    const chunkContent = data.choices && data.choices[0] && data.choices[0].delta && (data.choices[0].delta.content || data.choices[0].delta.reasoning_content);
+                    const chunkContent =
+                      (data && (data.content || data.reasoning_content)) ||
+                      (data && data.delta && (data.delta.content || data.delta.reasoning_content)) ||
+                      (data && data.choices && data.choices[0] && data.choices[0].delta && (data.choices[0].delta.content || data.choices[0].delta.reasoning_content));
                     if (chunkContent) {
                       assistantMsg += chunkContent;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
                       scrollToBottom();
-                      console.log('--- DEBUG: Content appended ---');
-                      console.log('Current length:', assistantMsg.length);
                     }
-                    if (data.error) {
-                      console.error('--- DEBUG: Error in stream data ---', data.error);
+                    if (data && data.error) {
                       showAlert('Error', data.error);
+                      shouldStop = true;
                       break;
                     }
-                  } catch(e) {
-                    // Fallback voor directe tekst (als het geen JSON is)
+                  } catch (e) {
                     if (jsonStr && !jsonStr.startsWith('{')) {
                       assistantMsg += jsonStr;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
                       scrollToBottom();
-                      console.log('--- DEBUG: Fallback text appended ---');
                     }
-                    console.error('--- DEBUG: JSON parse error ---', e);
                   }
                 }
+                if (shouldStop) break;
               }
+              if (shouldStop) break;
             }
             
             addMessageToChat('assistant', assistantMsg);

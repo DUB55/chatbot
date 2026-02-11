@@ -103,11 +103,57 @@ async def chatbot_simple(request: Request):
                     async with httpx.AsyncClient(timeout=30.0) as client:
                         async with client.stream("GET", url) as response:
                             if response.status_code == 200:
+                                sse_buffer = ""
                                 async for chunk in response.aiter_text():
-                                    if chunk:
-                                        yield f"data: {json.dumps({'content': chunk})}\n\n"
+                                    if not chunk:
+                                        continue
+                                    sse_buffer += chunk
+                                    events = sse_buffer.split("\n\n")
+                                    sse_buffer = events.pop() if events else ""
+                                    for evt in events:
+                                        lines = [l.strip() for l in evt.split("\n") if l.strip()]
+                                        payloads = []
+                                        done_event = False
+                                        for line in lines:
+                                            if line.startswith("data:"):
+                                                payload = line[5:].strip()
+                                                if payload == "[DONE]":
+                                                    done_event = True
+                                                    continue
+                                                if payload:
+                                                    payloads.append(payload)
+                                        for payload in payloads:
+                                            text_chunk = ""
+                                            try:
+                                                data = json.loads(payload)
+                                                text_chunk = (
+                                                    data.get("content")
+                                                    or data.get("reasoning_content")
+                                                    or (
+                                                        (data.get("delta") or {}).get("content")
+                                                        or (data.get("delta") or {}).get("reasoning_content")
+                                                    )
+                                                    or (
+                                                        (
+                                                            (data.get("choices") or [{}])[0].get("delta") or {}
+                                                        ).get("content")
+                                                    )
+                                                    or (
+                                                        (
+                                                            (data.get("choices") or [{}])[0].get("delta") or {}
+                                                        ).get("reasoning_content")
+                                                    )
+                                                ) or ""
+                                            except Exception:
+                                                if not payload.startswith("{"):
+                                                    text_chunk = payload
+                                            if text_chunk:
+                                                yield f"data: {json.dumps({'content': text_chunk})}\n\n"
+                                        if done_event:
+                                            yield "data: [DONE]\n\n"
+                                            return
                                 yield "data: [DONE]\n\n"
-                                return # Success!
+                                return
                             else:
                                 last_error = f"HTTP {response.status_code}"
                                 continue # Try next model
