@@ -1226,7 +1226,7 @@
                   
                   try {
                     const data = JSON.parse(jsonStr);
-                    const chunkContent = data.content || data.reasoning_content;
+                    const chunkContent = data.choices && data.choices[0] && data.choices[0].delta && (data.choices[0].delta.content || data.choices[0].delta.reasoning_content);
                     if (chunkContent) {
                       assistantMsg += chunkContent;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
