@@ -360,6 +360,65 @@
         display: block;
         margin-bottom: 0.5rem;
       }
+      .message-content a {
+        color: var(--accent-blue);
+        text-decoration: none;
+        border-bottom: 1px dashed rgba(255,255,255,0.3);
+      }
+      .message-content a:hover {
+        border-bottom-color: var(--text-main);
+      }
+      .message-hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(to right, transparent, rgba(255,255,255,0.25), transparent);
+        margin: 1.2rem 0;
+      }
+      .message-content .small-caps {
+        font-variant: small-caps;
+        letter-spacing: 0.5px;
+      }
+      .message-content .table-wrapper {
+        width: 100%;
+        overflow-x: auto;
+        margin: 1rem 0;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+      }
+      .message-content table.message-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #0d0d0d;
+      }
+      .message-content table.message-table thead th {
+        background: #1b1b1b;
+        color: var(--text-main);
+        font-weight: 600;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border-color);
+      }
+      .message-content table.message-table tbody td {
+        padding: 10px 12px;
+        border-top: 1px solid var(--border-color);
+        color: var(--text-main);
+        vertical-align: top;
+      }
+      .message-content table.message-table tbody tr:nth-child(odd) {
+        background: rgba(255,255,255,0.03);
+      }
+      .message-content blockquote {
+        margin: 1rem 0;
+        padding: 0.8rem 1rem;
+        border-left: 4px solid var(--accent-blue);
+        background: rgba(255,255,255,0.03);
+        border-radius: 6px;
+      }
+      .message-content code {
+        background: rgba(255,255,255,0.08);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      }
 
       /* Action Buttons for AI Responses */
       .message-actions {
@@ -539,21 +598,37 @@
 
       /* Code Blocks */
       .code-container {
-        background: #0d0d0d;
-        border-radius: 8px;
-        margin: 1.5rem 0;
+        background: #0b0b0b;
         border: 1px solid var(--border-color);
+        border-radius: 10px;
+        margin: 1.5rem 0;
+        overflow: hidden;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35);
       }
       .code-header {
-        background: #2a2a2a;
-        padding: 0.6rem 1rem;
+        background: #131313;
+        padding: 0.6rem 0.9rem;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        font-size: 0.75rem;
-        border-radius: 8px 8px 0 0;
+        font-size: 0.78rem;
       }
-      .code-container pre { margin: 0; padding: 1.2rem; overflow-x: auto; }
+      .code-header span {
+        color: var(--text-secondary);
+        font-weight: 600;
+      }
+      .code-header button {
+        background: rgba(255,255,255,0.08);
+        color: var(--text-main);
+        border: 1px solid var(--border-color);
+        padding: 4px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .code-header button:hover {
+        background: rgba(255,255,255,0.15);
+      }
+      .code-container pre { margin: 0; padding: 1rem 1.2rem; overflow-x: auto; background: #0b0b0b; }
 
       /* Animations */
       @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -1483,7 +1558,59 @@
           .replace(/\s+at\s*\.\s*$/g, '')
           .replace(/https:\/\/image\.pollinations\.ai\/prompt\/[^\s)]+/gi, '');
 
-        let formatted = cleaned
+        const convertTables = (md) => {
+          const lines = md.split('\n');
+          let out = '';
+          let i = 0;
+          while (i < lines.length) {
+            const line = lines[i];
+            const next = lines[i + 1] || '';
+            const isHeader = /^\s*\|.+\|\s*$/.test(line);
+            const isSep = /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.test(next);
+            if (isHeader && isSep) {
+              const headerCells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(s => s.trim());
+              const sepCells = next.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(s => s.trim());
+              const aligns = sepCells.map(s => {
+                const left = s.startsWith(':');
+                const right = s.endsWith(':');
+                if (left && right) return 'center';
+                if (right) return 'right';
+                if (left) return 'left';
+                return 'left';
+              });
+              i += 2;
+              const rows = [];
+              while (i < lines.length && /^\s*\|.+\|\s*$/.test(lines[i])) {
+                const rowCells = lines[i].trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(s => s.trim());
+                rows.push(rowCells);
+                i++;
+              }
+              out += '<div class="table-wrapper"><table class="message-table"><thead><tr>';
+              headerCells.forEach((h, idx) => { out += `<th style="text-align:${aligns[idx] || 'left'}">${h}</th>`; });
+              out += '</tr></thead><tbody>';
+              rows.forEach(r => {
+                out += '<tr>';
+                r.forEach((c, idx) => { out += `<td style="text-align:${aligns[idx] || 'left'}">${c}</td>`; });
+                out += '</tr>';
+              });
+              out += '</tbody></table></div>';
+              if (lines[i] && lines[i].trim() === '') { out += '\n'; i++; }
+              continue;
+            } else {
+              out += line + '\n';
+              i++;
+            }
+          }
+          return out;
+        };
+
+        const refDefs = {};
+        cleaned = cleaned.replace(/^\[([^\]]+)\]:\s*(\S+)(?:\s+"([^"]+)")?\s*$/gm, (m, name, url, title) => {
+          refDefs[name.toLowerCase()] = { url, title };
+          return '';
+        });
+
+        let formatted = convertTables(cleaned)
           // Code blocks first
           .replace(/```(\w+)?\n([\s\S]*?)```/g, (match, lang, code) => {
             const validLang = (lang || 'plaintext').toLowerCase();
@@ -1500,12 +1627,49 @@
                       <pre><code class="hljs ${validLang}">${highlighted}</code></pre>
                     </div>`;
           })
+          // Horizontal rule
+          .replace(/^\s*---\s*$/gm, '<hr class="message-hr">')
           // Headers
           .replace(/^### (.*$)/gm, '<h3>$1</h3>')
           .replace(/^## (.*$)/gm, '<h2>$1</h2>')
           .replace(/^# (.*$)/gm, '<h1>$1</h1>')
           // Bold
           .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          // Bold italic
+          .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+          // Inline code
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          // Blockquote
+          .replace(/^\s*>\s+(.*)$/gm, '<blockquote>$1</blockquote>')
+          // Strikethrough
+          .replace(/~~(.*?)~~/g, '<del>$1</del>')
+          // Italic
+          .replace(/\*(?!\*)([^*]+)\*/g, '<em>$1</em>')
+          // Small caps
+          .replace(/_([^_\n]+)_/g, '<span class="small-caps">$1</span>')
+          // Inline links
+          .replace(/\[([^\]]+)\]\((\S+?)(?:\s+"([^"]+)")?\)/g, (m, text, url, title) => {
+            const u = url.startsWith('http') ? url : `https://${url}`;
+            const t = title ? ` title="${title}"` : '';
+            return `<a href="${u}" target="_blank" rel="noopener"${t}>${text}</a>`;
+          })
+          // Reference links
+          .replace(/\[([^\]]+)\]\[([^\]]+)\]/g, (m, text, ref) => {
+            const d = refDefs[ref.toLowerCase()];
+            if (!d || !d.url) return text;
+            const u = d.url.startsWith('http') ? d.url : `https://${d.url}`;
+            const t = d.title ? ` title="${d.title}"` : '';
+            return `<a href="${u}" target="_blank" rel="noopener"${t}>${text}</a>`;
+          })
+          // Autolinks
+          .replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s)]+)/gi, (m, pre, url) => {
+            const u = url.startsWith('http') ? url : `https://${url}`;
+            return `${pre}<a href="${u}" target="_blank" rel="noopener">${url}</a>`;
+          })
+          // Emails
+          .replace(/(^|[\s(])([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/gi, (m, pre, email) => {
+            return `${pre}<a href="mailto:${email}">${email}</a>`;
+          })
           // Bullet points
           .replace(/^\s*[-*] (.*$)/gm, '<div class="list-item"><span>•</span> $1</div>')
           // Images
