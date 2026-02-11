@@ -1226,8 +1226,9 @@
                   
                   try {
                     const data = JSON.parse(jsonStr);
-                    if (data.content) {
-                      assistantMsg += data.content;
+                    const chunkContent = data.content || data.reasoning_content;
+                    if (chunkContent) {
+                      assistantMsg += chunkContent;
                       msgDiv.setAttribute('data-raw-content', assistantMsg);
                       contentDiv.innerHTML = formatText(assistantMsg);
                       scrollToBottom();
