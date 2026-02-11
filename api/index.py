@@ -1,8 +1,9 @@
 import json
 import httpx
 import urllib.parse
+import asyncio
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -10,32 +11,112 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Configuration
+DEFAULT_MODEL = "openai"
+MODELS = {
+    "gpt-4o": "openai",
+    "gpt-4o-mini": "openai",
+    "mistral": "mistral",
+    "llama": "llama",
+    "search": "search",
+    "claude-3-haiku": "openai", # Fallback to openai for haiku
+    "deepseek": "deepseek",
+    "flux": "flux" # Image model
+}
+
+# Specialized prompts
+BUILDER_SYSTEM_PROMPT = """You are DUB5 AI, a world-class senior software architect developed by DUB55.
+You are the core engine behind the DUB5 Web App Builder. 
+When asked to build or modify an app/website, provide the full file structure.
+Use this EXACT XML format for EVERY file:
+<file path="filename.ext">
+// Full file content here
+</file>
+1. Separate files: Use distinct <file> tags for HTML, CSS, JS, etc.
+2. Completeness: Code must be 100% functional.
+3. Image Generation: Use: ![Description](https://image.pollinations.ai/prompt/DESCRIPTION?width=1024&height=1024&nologo=true)."""
+
+PERSONALITIES = {
+    "general": "You are DUB5 AI, a helpful and professional assistant.",
+    "coder": BUILDER_SYSTEM_PROMPT,
+    "teacher": "You are DUB5 AI, a patient teacher. Explain concepts simply with analogies.",
+    "writer": "You are DUB5 AI, a creative writer and storyteller."
+}
+
+THINKING_MODES = {
+    "balanced": {"model": "openai", "system_add": ""},
+    "concise": {"model": "openai", "system_add": " Be extremely concise."},
+    "reason": {"model": "mistral", "system_add": " Use step-by-step reasoning."},
+    "deep": {"model": "llama", "system_add": " Provide deep, detailed analysis."}
+}
+
 @app.post("/api/chatbot")
 async def chatbot_simple(request: Request):
     try:
-        # Get request body
         body = await request.json()
-        user_input = body.get("input", "Hallo")
+        user_input = body.get("input", "")
+        history = body.get("history", [])
+        model_alias = body.get("model", "gpt-4o")
+        mode = body.get("thinking_mode", "balanced")
+        personality = body.get("personality", "general")
         
-        # Simple Pollinations request
-        encoded_query = urllib.parse.quote(user_input)
-        url = f"https://text.pollinations.ai/{encoded_query}?model=openai&system=You%20are%20DUB5%20AI"
+        # Base system prompt
+        system_prompt = PERSONALITIES.get(personality, PERSONALITIES["general"])
         
+        # Determine model
+        if mode in THINKING_MODES:
+            model = THINKING_MODES[mode]["model"]
+            system_prompt += THINKING_MODES[mode]["system_add"]
+        else:
+            model = MODELS.get(model_alias, DEFAULT_MODEL)
+        
+        # Image capability
+        if "![" not in system_prompt:
+            system_prompt += " You can generate images with: ![Image](https://image.pollinations.ai/prompt/DESCRIPTION?width=1024&height=1024&nologo=true)."
+
+        # Context construction
+        full_prompt = ""
+        context_msgs = history[-8:] if history else []
+        for msg in context_msgs:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            full_prompt += f"{role}: {msg['content']}\n"
+        full_prompt += f"User: {user_input}\nAssistant:"
+
         async def generate():
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                if response.status_code == 200:
-                    # Send in the format frontend expects
-                    data = json.dumps({"content": response.text})
-                    yield f"data: {data}\n\n"
-                    yield "data: [DONE]\n\n"
-                else:
-                    error_data = json.dumps({"error": f"HTTP {response.status_code}"})
-                    yield f"data: {error_data}\n\n"
+            # Try multiple models/providers if one fails
+            models_to_try = [model, "mistral", "llama", "openai"]
+            # Remove duplicates while preserving order
+            models_to_try = list(dict.fromkeys(models_to_try))
+            
+            last_error = None
+            for attempt_model in models_to_try:
+                try:
+                    encoded_system = urllib.parse.quote(system_prompt)
+                    encoded_prompt = urllib.parse.quote(full_prompt)
+                    url = f"https://text.pollinations.ai/{encoded_prompt}?model={attempt_model}&system={encoded_system}&stream=true"
+                    
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        async with client.stream("GET", url) as response:
+                            if response.status_code == 200:
+                                async for chunk in response.aiter_text():
+                                    if chunk:
+                                        yield f"data: {json.dumps({'content': chunk})}\n\n"
+                                yield "data: [DONE]\n\n"
+                                return # Success!
+                            else:
+                                last_error = f"HTTP {response.status_code}"
+                                continue # Try next model
+                except Exception as e:
+                    last_error = str(e)
+                    continue # Try next model
+            
+            # If all failed
+            yield f"data: {json.dumps({'error': f'All providers failed. Last error: {last_error}'})}\n\n"
 
         return StreamingResponse(generate(), media_type="text/event-stream")
                 

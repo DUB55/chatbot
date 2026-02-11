@@ -815,10 +815,10 @@
           <div class="settings-row">
             <span>Model</span>
             <select id="modelSelect" class="select-input">
-              <option value="gpt-4o">GPT-4o (Recommended)</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo</option>
-              <option value="claude-3-opus">Claude 3 Opus</option>
-              <option value="gemini-pro">Gemini Pro</option>
+              <option value="gpt-4o">GPT-4o (Balanced)</option>
+              <option value="mistral">Mistral (Fast)</option>
+              <option value="llama">Llama 3.1 405B (Powerful)</option>
+              <option value="search">Search (Web Knowledge)</option>
             </select>
           </div>
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 0.5rem;">
@@ -1126,7 +1126,18 @@
           try {
             console.log("--- DEBUG: Starting Chatbot Request ---");
             console.log("URL: /api/chatbot");
-            console.log("Payload:", { input: promptText, historyLength: chat.messages.length });
+            
+            const activeMode = Object.keys(activeModes).find(m => activeModes[m]) || 'balanced';
+            const personality = document.getElementById('personalitySelect')?.value || 'general';
+            const model = document.getElementById('modelSelect')?.value || 'gpt-4o';
+
+            console.log("Payload:", { 
+              input: promptText, 
+              historyLength: chat.messages.length,
+              mode: activeMode,
+              personality: personality,
+              model: model
+            });
             
             const response = await fetch('/api/chatbot', {
               method: 'POST',
@@ -1136,7 +1147,10 @@
               },
               body: JSON.stringify({
                 input: promptText,
-                history: chat.messages
+                history: chat.messages,
+                thinking_mode: activeMode,
+                personality: personality,
+                model: model
               })
             });
 
