@@ -2,6 +2,7 @@ import json
 import httpx
 import urllib.parse
 import asyncio
+import re
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +56,44 @@ THINKING_MODES = {
     "deep": {"model": "llama", "system_add": " Provide deep, detailed analysis."}
 }
 
+async def ddg_search(query: str):
+    url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_redirect=1&no_html=1"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(url)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    items = []
+    for item in data.get("RelatedTopics", []):
+        if isinstance(item, dict):
+            t = item.get("Text") or item.get("Name") or ""
+            u = item.get("FirstURL") or ""
+            if t and u:
+                items.append({"title": t, "url": u})
+    for item in data.get("Results", []):
+        if isinstance(item, dict):
+            t = item.get("Text") or ""
+            u = item.get("FirstURL") or ""
+            if t and u:
+                items.append({"title": t, "url": u})
+    return items[:5]
+
+async def fetch_readable(url: str):
+    u = url.strip()
+    if u.startswith("http://"):
+        wrapped = "https://r.jina.ai/http://" + u[len("http://"):]
+    elif u.startswith("https://"):
+        wrapped = "https://r.jina.ai/http://" + u[len("https://"):]
+    else:
+        wrapped = "https://r.jina.ai/http://" + u
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(wrapped)
+        if r.status_code != 200:
+            return ""
+        txt = r.text
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt[:3000]
+
 @app.post("/api/chatbot")
 async def chatbot_simple(request: Request):
     try:
@@ -86,6 +125,79 @@ async def chatbot_simple(request: Request):
             role = "User" if msg["role"] == "user" else "Assistant"
             full_prompt += f"{role}: {msg['content']}\n"
         full_prompt += f"User: {user_input}\nAssistant:"
+
+        async def generate_browse():
+            try:
+                yield f"data: {json.dumps({'content': 'Searching web...'})}\n\n"
+                sources = await ddg_search(user_input)
+                if not sources:
+                    yield f"data: {json.dumps({'content': 'No sources found.'})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+                titles = [s.get('title', '') for s in sources]
+                yield f"data: {json.dumps({'content': 'Found sources: ' + ', '.join([f'[{i+1}] {t}' for i,t in enumerate(titles)])})}\n\n"
+                fetched = []
+                for s in sources[:3]:
+                    txt = await fetch_readable(s.get('url', ''))
+                    if txt:
+                        fetched.append({"title": s.get("title",""), "url": s.get("url",""), "text": txt})
+                src_block = ""
+                for i, s in enumerate(fetched):
+                    src_block += f"[{i+1}] {s['title']} ({s['url']})\n{ s['text'] }\n\n"
+                browse_prompt = f"Sources:\n{src_block}\nUser: {user_input}\nAssistant:"
+                encoded_system = urllib.parse.quote(system_prompt + " Use only the sources and cite as [1], [2].")
+                encoded_prompt = urllib.parse.quote(browse_prompt)
+                url = f"https://text.pollinations.ai/{encoded_prompt}?model=openai&system={encoded_system}&stream=true"
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    async with client.stream("GET", url) as response:
+                        if response.status_code == 200:
+                            sse_buffer = ""
+                            async for chunk in response.aiter_text():
+                                if not chunk:
+                                    continue
+                                sse_buffer += chunk
+                                events = sse_buffer.split("\n\n")
+                                sse_buffer = events.pop() if events else ""
+                                for evt in events:
+                                    lines = [l.strip() for l in evt.split("\n") if l.strip()]
+                                    for line in lines:
+                                        if line.startswith("data:"):
+                                            payload = line[5:].strip()
+                                            if payload == "[DONE]":
+                                                yield "data: [DONE]\n\n"
+                                                return
+                                            if not payload:
+                                                continue
+                                            try:
+                                                data = json.loads(payload)
+                                                content_text = (
+                                                    data.get("content")
+                                                    or (data.get("delta") or {}).get("content")
+                                                    or (((data.get("choices") or [{}])[0].get("delta") or {}).get("content"))
+                                                ) or ""
+                                                reasoning_text = (
+                                                    data.get("reasoning")
+                                                    or data.get("reasoning_content")
+                                                    or (data.get("delta") or {}).get("reasoning_content")
+                                                    or (((data.get("choices") or [{}])[0].get("delta") or {}).get("reasoning_content"))
+                                                ) or ""
+                                            except Exception:
+                                                content_text = "" 
+                                                reasoning_text = ""
+                                            if content_text:
+                                                yield f"data: {json.dumps({'content': content_text})}\n\n"
+                                            if reasoning_text:
+                                                yield f"data: {json.dumps({'reasoning': reasoning_text})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+                        else:
+                            yield f"data: {json.dumps({'error': 'Browse generation failed'})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            return
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
 
         async def generate():
             # Try multiple models/providers if one fails
@@ -164,7 +276,10 @@ async def chatbot_simple(request: Request):
             # If all failed
             yield f"data: {json.dumps({'error': f'All providers failed. Last error: {last_error}'})}\n\n"
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        if model_alias == "search":
+            return StreamingResponse(generate_browse(), media_type="text/event-stream")
+        else:
+            return StreamingResponse(generate(), media_type="text/event-stream")
                 
     except Exception as e:
         async def error_gen():

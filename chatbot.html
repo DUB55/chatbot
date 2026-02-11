@@ -491,6 +491,32 @@
         display: block;
         background: #000;
       }
+      .image-skeleton {
+        width: 100%;
+        height: 320px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(90deg, #0a0a0a 25%, #111 50%, #0a0a0a 75%);
+        background-size: 400% 100%;
+        animation: shimmer 1.2s infinite;
+      }
+      @keyframes shimmer {
+        0% { background-position: 100% 0; }
+        100% { background-position: 0 0; }
+      }
+      .image-loading-spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(255,255,255,0.2);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      .hidden { display: none !important; }
 
       /* Scroll to Bottom Button */
       #scrollToBottomBtn {
@@ -1429,7 +1455,7 @@
           const lastUserText = chat.messages[lastUserIndex].content;
           
           // Remove all messages after the last user message
-          chat.messages = chat.messages.slice(0, lastUserIndex);
+          chat.messages = chat.messages.slice(0, lastUserIndex + 1);
           
           // Save and reload UI
           saveChats();
@@ -1454,7 +1480,8 @@
           .replace(/\b(at)\b(?=\s*\.|\s*$)/gi, '')
           .replace(/^\s*\.\s*$/gm, '')
           .replace(/^\s*at\s*$/gm, '')
-          .replace(/\s+at\s*\.\s*$/g, '');
+          .replace(/\s+at\s*\.\s*$/g, '')
+          .replace(/https:\/\/image\.pollinations\.ai\/prompt\/[^\s)]+/gi, '');
 
         let formatted = cleaned
           // Code blocks first
@@ -1482,7 +1509,14 @@
           // Bullet points
           .replace(/^\s*[-*] (.*$)/gm, '<div class="list-item"><span>•</span> $1</div>')
           // Images
-          .replace(/!\[(.*?)\]\((.*?)\)/g, '<div class="message-image-container"><img src="$2" alt="$1" class="message-image" onclick="window.open(\'$2\')"></div>')
+          .replace(/!\[(.*?)\]\((.*?)\)/g, (m, alt, url) => {
+            const safeAlt = alt || '';
+            const safeUrl = url || '';
+            return `<div class="message-image-container">
+                      <div class="image-skeleton"><div class="image-loading-spinner"></div></div>
+                      <img src="${safeUrl}" alt="${safeAlt}" class="message-image hidden" onload="handleImageLoaded(this)" onerror="handleImageError(this)">
+                    </div>`;
+          })
           // Numbered lists
           .replace(/^\s*(\d+)\. (.*$)/gm, '<div class="list-item"><span>$1.</span> $2</div>')
           // Line breaks (only if not inside a block tag we just created)
@@ -1494,6 +1528,22 @@
           });
 
         return formatted;
+      }
+      
+      function handleImageLoaded(img) {
+        const container = img.closest('.message-image-container');
+        const skeleton = container.querySelector('.image-skeleton');
+        if (skeleton) skeleton.classList.add('hidden');
+        img.classList.remove('hidden');
+        img.style.opacity = '0';
+        img.style.transition = 'opacity 0.3s ease';
+        requestAnimationFrame(() => { img.style.opacity = '1'; });
+      }
+      
+      function handleImageError(img) {
+        const container = img.closest('.message-image-container');
+        const skeleton = container.querySelector('.image-skeleton');
+        if (skeleton) skeleton.innerHTML = '<div style="color:#ff4d4d">Failed to generate image</div>';
       }
       
       function typesetContent(el) {
