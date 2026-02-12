@@ -1257,7 +1257,7 @@
             console.log("URL: /api/chatbot");
             
             const activeMode = Object.keys(activeModes).find(m => activeModes[m]) || 'balanced';
-            const personality = document.getElementById('personalitySelect')?.value || 'general';
+            const personality = localStorage.getItem('dub5_personality') || 'general';
             const model = document.getElementById('modelSelect')?.value || 'gpt-4o';
 
             console.log("Payload:", { 
