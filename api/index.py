@@ -49,6 +49,7 @@ END_FILE
 - Determinism: be explicit about filenames and directories; never rely on the app to guess.
   If editing an existing file, emit the same BEGIN_FILE path and the full updated content.
 - Error handling: if a file path is ambiguous, first output a short Markdown bullet list stating required files and their exact paths, then emit the file blocks.
+- If the user says "Continue EXACTLY where you left off/stopped", you MUST continue your previous response IMMEDIATELY from the last character, without any introductory text, conversational filler, preambles, or explanations. DO NOT add anything before resuming the content.
 
 Images: When an image is required, include a link using:
 ![Description](https://image.pollinations.ai/prompt/DESCRIPTION?width=1024&height=1024&nologo=true)."""
