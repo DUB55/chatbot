@@ -348,17 +348,23 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
             if personality_name == "coder" and not force_roulette:
                 logger.info("Using specialized Pollinations AI layer for Coder")
                 try:
+                    pollinations_url = "https://text.pollinations.ai/openai"
+                    pollinations_payload = {
+                        "messages": messages,
+                        "model": "openai",
+                        "stream": True,
+                        "system_prompt": messages[0]["content"] if messages and messages[0]["role"] == "system" else None
+                    }
+                    logger.info(f"Pollinations Request: URL={pollinations_url}, Payload={json.dumps(pollinations_payload)}")
+
                     with httpx.stream(
                         "POST",
-                        "https://text.pollinations.ai/openai",
-                        json={
-                            "messages": messages,
-                            "model": "openai",
-                            "stream": True,
-                            "system_prompt": messages[0]["content"] if messages and messages[0]["role"] == "system" else None
-                        },
+                        pollinations_url,
+                        json=pollinations_payload,
                         timeout=60.0
                     ) as response:
+                        logger.info(f"Pollinations Response Status: {response.status_code}")
+                        response.raise_for_status() # Raise an exception for 4xx/5xx responses
                         for line in response.iter_lines():
                             if line.startswith("data: "):
                                 data_str = line[6:]
@@ -368,10 +374,22 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                                     content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                     if content:
                                         loop.call_soon_threadsafe(queue.put_nowait, content)
-                                except: continue
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
+                                    continue
+                                except Exception as chunk_e:
+                                    logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
+                                    continue
                     return 
+                except httpx.HTTPStatusError as http_error:
+                    logger.error(f"Pollinations direct layer HTTP error: {http_error.response.status_code} - {http_error.response.text}")
+                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI HTTP Error: {http_error.response.status_code}"))
+                except httpx.RequestError as req_error:
+                    logger.error(f"Pollinations direct layer request error: {req_error}")
+                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI Request Error: {req_error}"))
                 except Exception as pe:
-                    logger.error(f"Pollinations direct layer failed: {pe}")
+                    logger.error(f"Pollinations direct layer general error: {pe}", exc_info=True)
+                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI General Error: {pe}"))
 
             # Fallback to g4f Client
             logger.info(f"Using g4f Client for {model}")

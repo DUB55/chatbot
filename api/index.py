@@ -1,11 +1,16 @@
+import logging
 import json
 import httpx
 import urllib.parse
 import asyncio
 import re
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -16,6 +21,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static files (CSS, JS, etc.)
+app.mount("/static", StaticFiles(directory="."), name="static")
+
+@app.get("/")
+async def get_chatbot_html():
+    with open("chatbot.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
 
 # Configuration
 DEFAULT_MODEL = "openai"
@@ -147,3 +160,10 @@ async def chatbot_simple(request: Request):
         # Context construction
         full_prompt = ""
         context_msgs = history[-8:] if history else []
+
+    except Exception as e:
+        logger.error(f"Error in chatbot_simple: {e}", exc_info=True)
+        return StreamingResponse(
+            content=iter([json.dumps({"error": str(e)}) + "\n\n"]),
+            media_type="application/json"
+        )
