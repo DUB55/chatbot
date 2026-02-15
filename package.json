@@ -1,0 +1,29 @@
+{
+  "name": "dub5-chatbot",
+  "version": "1.0.0",
+  "description": "DUB5 AI Chatbot with multiple personalities",
+  "main": "api/index.py",
+  "scripts": {
+    "build": "echo 'Build complete - static files are in public/'",
+    "start": "python -m uvicorn api.index:app --host 0.0.0.0 --port 8001 --reload",
+    "dev": "python -m uvicorn api.index:app --host 0.0.0.0 --port 8001 --reload",
+    "test": "python tests/test_coder_personality.py && python tests/test_general_personality.py"
+  },
+  "keywords": ["ai", "chatbot", "vercel", "fastapi", "g4f", "pollinations"],
+  "author": "DUB55",
+  "license": "MIT",
+  "dependencies": {
+    "fastapi": "^0.104.1",
+    "uvicorn": "^0.24.0",
+    "httpx": "^0.25.2",
+    "pydantic": "^2.5.0",
+    "python-multipart": "^0.0.6",
+    "tenacity": "^8.2.3",
+    "pybreaker": "^1.4.1",
+    "nest-asyncio": "^1.6.0",
+    "g4f": "^0.7.0"
+  },
+  "engines": {
+    "python": ">=3.9"
+  }
+}
