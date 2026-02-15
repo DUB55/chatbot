@@ -3,3 +3,7 @@ uvicorn
 httpx
 pydantic
 python-multipart
+tenacity
+pybreaker
+nest-asyncio
+g4f

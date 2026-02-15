@@ -8,14 +8,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from api.chatbot_backup import stream_chat_completion
 from api.models import DEFAULT_MODEL, MODELS
 from api.thinking_modes import THINKING_MODES
+from api.config import Config
+from api.chatbot_backup import stream_chat_completion
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(root_path="")
 
 app.add_middleware(
     CORSMiddleware,
@@ -181,3 +182,66 @@ async def chatbot_response(request: Request):
             content=iter([json.dumps({"error": str(e)}) + "\n\n"]),
             media_type="application/json"
         )
+
+@app.get("/health")
+async def health_check():
+    health_status = {
+        "pollinations_ai": {"status": "unknown", "error": None},
+        "g4f_ai": {"status": "unknown", "error": None}
+    }
+
+    # Test Pollinations AI path (coder personality)
+    try:
+        test_messages = [{"role": "user", "content": "Hello"}]
+        test_response_generator = stream_chat_completion(
+            messages=test_messages,
+            model="gpt-4o",
+            web_search=False,
+            personality_name="coder",
+            image_data=None,
+            force_roulette=False,
+            session_id="health_check_pollinations"
+        )
+        # Consume the generator to trigger the call and check for any content
+        async for chunk in test_response_generator:
+            if chunk.strip() and not chunk.startswith(":"): # Ignore heartbeats
+                data = json.loads(chunk.replace("data: ", ""))
+                if data.get("content"): # Check if any content is received
+                    health_status["pollinations_ai"]["status"] = "healthy"
+                    break
+        if health_status["pollinations_ai"]["status"] == "unknown":
+            health_status["pollinations_ai"]["status"] = "unresponsive"
+
+    except Exception as e:
+        logger.error(f"Health check failed for Pollinations AI: {e}", exc_info=True)
+        health_status["pollinations_ai"]["status"] = "unhealthy"
+        health_status["pollinations_ai"]["error"] = str(e)
+
+    # Test g4f AI path (force roulette to bypass Pollinations if it's up)
+    try:
+        test_messages = [{"role": "user", "content": "Hello"}]
+        test_response_generator = stream_chat_completion(
+            messages=test_messages,
+            model="gpt-4o",
+            web_search=False,
+            personality_name="general", # Use general to ensure g4f path
+            image_data=None,
+            force_roulette=True, # Force g4f path
+            session_id="health_check_g4f"
+        )
+        # Consume the generator to trigger the call and check for any content
+        async for chunk in test_response_generator:
+            if chunk.strip() and not chunk.startswith(":"): # Ignore heartbeats
+                data = json.loads(chunk.replace("data: ", ""))
+                if data.get("content"): # Check if any content is received
+                    health_status["g4f_ai"]["status"] = "healthy"
+                    break
+        if health_status["g4f_ai"]["status"] == "unknown":
+            health_status["g4f_ai"]["status"] = "unresponsive"
+
+    except Exception as e:
+        logger.error(f"Health check failed for g4f AI: {e}", exc_info=True)
+        health_status["g4f_ai"]["status"] = "unhealthy"
+        health_status["g4f_ai"]["error"] = str(e)
+    
+    return health_status

@@ -8,6 +8,9 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List, Dict, Any, AsyncGenerator
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+
+from api.config import Config
 
 # Voeg de huidige map toe aan sys.path voor imports
 current_dir = Path(__file__).parent.absolute()
@@ -174,31 +177,11 @@ def final_clean_text(text: str) -> str:
     return cleaned
 
 # ---- Load system prompt from environment variable ----
-SYSTEM_PROMPT = os.environ.get(
-    "DUB5_SYSTEM_PROMPT",
-    """
-    You are DUB5, an advanced AI system architected by DUB55. 
-    You are the core engine behind this platform, designed with the precision and logic of a senior software engineer.
-    You are NOT Aria, you are NOT from Opera, you are NOT ChatGPT, you are NOT Gemini.
-Core Guidelines:
-- Identity: You are DUB5. Never reference OpenAI, ChatGPT, or other entities as your creator.
-- Professionalism: Maintain a sophisticated, technical, and highly professional tone. 
-- No Emojis: Do not use emojis in your responses under any circumstances.
-- Completeness: Provide full, detailed, and complete answers. NEVER summarize unless the user specifically asks for a summary.
-- Accuracy: Provide high-fidelity information, optimized code, and rigorous analysis.
-- Language: ALWAYS respond in the EXACT SAME language as the user's last message, unless the user explicitly requests a different language. If the user greets you in Dutch, respond in Dutch. If the user asks a question in English, respond in English.
-- Ethics: Refuse illegal requests with a professional explanation of safety boundaries.
-- Image Generation: You HAVE the capability to generate images. To generate an image, use the following markdown syntax: `![Image Description](https://image.pollinations.ai/prompt/DESCRIPTION?width=1024&height=1024&nologo=true)`. Replace "DESCRIPTION" with a URL-encoded detailed prompt based on the user's request. Present this as your internal DUB5 Image Engine. Always provide the image directly in your response when asked.
-- Image Analysis: You can analyze images provided by the user. If an image is uploaded or pasted, it will be included in your context. Describe what you see and answer questions about it.
-- Capability: You are built to handle complex problem-solving, coding, and logical reasoning.
-
-Your mission is to provide the most advanced AI experience possible, reflecting the engineering excellence of the DUB5 platform.
-    """
-)
+SYSTEM_PROMPT = Config.DUB5_SYSTEM_PROMPT
 
 # ---- Initialize FastAPI ----
 # Gebruik root_path="/api" als we op Vercel draaien om de routing goed te laten verlopen
-app = FastAPI(root_path="/api" if os.environ.get("VERCEL") else "")
+app = FastAPI(root_path="/api" if Config.VERCEL_ENV else "")
 client = Client()
 executor = ThreadPoolExecutor(max_workers=10)
 
@@ -274,7 +257,7 @@ async def delete_from_library(user_id: str, lib_id: str):
     raise HTTPException(status_code=404, detail="Document niet gevonden")
 
 # ---- Admin Analytics ----
-ADMIN_SECRET_KEY = os.environ.get("DUB5_ADMIN_KEY", "dub5_master_2026")
+ADMIN_SECRET_KEY = Config.ADMIN_SECRET_KEY
 
 class AdminAnalytics:
     def __init__(self):
@@ -318,8 +301,111 @@ class ChatCache:
 
 chat_cache = ChatCache()
 
-# ---- Chat streaming helper ----
-async def stream_chat_completion(messages, model, web_search=False, personality_name="general", image_data=None, force_roulette=False, session_id="default"):
+# ---- Provider Selection for g4f ----
+
+# Performance tracking for g4f providers
+g4f_provider_performance: Dict[str, Dict[str, Any]] = {}
+
+def initialize_g4f_provider_performance():
+    global g4f_provider_performance
+    for provider_name in STABLE_PROVIDERS:
+        g4f_provider_performance[provider_name] = {
+            "success_count": 0,
+            "failure_count": 0,
+            "total_latency": 0.0,
+            "last_used_time": 0.0,
+            "last_failure_time": 0.0,
+            "consecutive_failures": 0,
+            "priority_score": 1.0 # Higher score means higher priority
+        }
+
+# Initialize performance data on startup
+initialize_g4f_provider_performance()
+
+def get_best_g4f_provider():
+    """
+    Selects the best available g4f provider based on a predefined list of stable providers.
+    In a more advanced setup, this would involve real-time performance tracking.
+    """
+    available_g4f_providers = []
+    for provider_name in dir(g4f.Provider):
+        if not provider_name.startswith("__") and provider_name.isidentifier():
+            provider_class = getattr(g4f.Provider, provider_name)
+            if provider_class is not None and hasattr(provider_class, '__call__'): # Check if it's a callable class (a provider)
+                available_g4f_providers.append(provider_name)
+
+    # Filter by STABLE_PROVIDERS from models.py
+    # Ensure STABLE_PROVIDERS is a list of strings
+    stable_providers_list = [p.strip() for p in STABLE_PROVIDERS if isinstance(p, str)]
+    
+    # Find intersection of available and stable providers
+    usable_providers = [p for p in available_g4f_providers if p in stable_providers_list]
+
+    if not usable_providers:
+        logger.warning("No usable g4f providers found from STABLE_PROVIDERS. Falling back to any available provider.")
+        # Fallback to any available provider if no stable ones are found
+        usable_providers = available_g4f_providers
+        if not usable_providers:
+            logger.error("No g4f providers available at all.")
+            return None
+
+    # Intelligent provider selection based on performance metrics
+    scored_providers = []
+    current_time = time.time()
+    
+    for provider_name in usable_providers:
+        performance = g4f_provider_performance.get(provider_name, {
+            "success_count": 0, "failure_count": 0, "total_latency": 0.0,
+            "last_used_time": 0.0, "last_failure_time": 0.0, "consecutive_failures": 0
+        })
+
+        score = 1.0 # Base score
+
+        # Penalize providers with recent consecutive failures
+        if performance["consecutive_failures"] > 2 and (current_time - performance["last_failure_time"]) < 300: # Cooldown for 5 minutes
+            logger.warning(f"Provider {provider_name} is in cooldown due to {performance['consecutive_failures']} consecutive failures.")
+            continue # Skip this provider for now
+
+        # Factor in success rate
+        total_calls = performance["success_count"] + performance["failure_count"]
+        if total_calls > 0:
+            success_rate = performance["success_count"] / total_calls
+            score *= (0.5 + success_rate) # Boost for higher success rate (0.5 to 1.5 multiplier)
+        
+        # Factor in average latency (lower is better)
+        if performance["success_count"] > 0:
+            avg_latency = performance["total_latency"] / performance["success_count"]
+            score *= (1.0 / (1.0 + avg_latency / 5.0)) # Inverse relationship, normalize by a typical latency (e.g., 5 seconds)
+        
+        # Factor in last used time (prefer less recently used to distribute load)
+        time_since_last_used = current_time - performance["last_used_time"]
+        score *= (1.0 + time_since_last_used / 3600.0) # Small boost for providers not used in the last hour
+
+        scored_providers.append((provider_name, score))
+
+    if not scored_providers:
+        logger.warning("No providers passed the scoring criteria. Falling back to random selection from all usable providers.")
+        selected_provider_name = random.choice(usable_providers)
+    else:
+        # Sort by score in descending order and pick the best one
+        scored_providers.sort(key=lambda x: x[1], reverse=True)
+        selected_provider_name = scored_providers[0][0]
+
+    logger.info(f"Selected g4f provider: {selected_provider_name} (Score: {scored_providers[0][1] if scored_providers else 'N/A'})")
+    return getattr(g4f.Provider, selected_provider_name)
+
+
+
+async def stream_chat_completion(
+    messages: List[Dict[str, str]],
+    model: str,
+    web_search: bool,
+    personality_name: str,
+    image_data: Optional[str],
+    force_roulette: bool,
+    session_id: str
+) -> AsyncGenerator[str, None]:
+    logger.info(f"stream_chat_completion called for session_id: {session_id}")
     start_time = time.time()
     
     # Check Cache
@@ -331,64 +417,155 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
         yield cached_response
         return
 
-    logger.info(f"Starting chat completion with model: {model}, web_search: {web_search}, session_id: {session_id}")
+    logger.info(f"Starting chat completion for session_id: {session_id}, model: {model}, personality: {personality_name}, web_search: {web_search}")
     
     # Metadata event
-    yield f"data: {json.dumps({'type': 'metadata', 'model': model, 'personality': personality_name})}\n\n"
+    yield f"data: {json.dumps({'type': 'metadata', 'model': model, 'personality': personality_name, 'session_id': session_id})}\n\n"
     
     # Immediate heartbeat to prevent Vercel timeout
     yield ": heartbeat\n\n" 
 
-    queue = asyncio.Queue()
     full_response_text = ""
-    
-    def fetch_chunks_sync(loop, queue):
-        try:
-            # Check for Pollinations direct layer first (faster for coder)
-            if personality_name == "coder" and not force_roulette:
-                logger.info("Using specialized Pollinations AI layer for Coder")
-                try:
-                    pollinations_url = "https://text.pollinations.ai/openai"
-                    pollinations_payload = {
-                        "messages": messages,
-                        "model": "openai",
-                        "stream": True,
-                        "system_prompt": messages[0]["content"] if messages and messages[0]["role"] == "system" else None
-                    }
-                    logger.info(f"Pollinations Request: URL={pollinations_url}, Payload={json.dumps(pollinations_payload)}")
+    try:
+        async for chunk in fetch_chunks_async(
+            messages, 
+            model, 
+            web_search, 
+            personality_name, 
+            image_data, 
+            force_roulette, 
+            session_id
+        ):
+            if chunk is None: # Sentinel value for end of stream
+                break
+            if isinstance(chunk, Exception):
+                raise chunk
+            
+            cleaned_chunk = clean_text(chunk) if chunk else ""
+            if cleaned_chunk:
+                yield f"data: {json.dumps({'type': 'chunk', 'content': cleaned_chunk})}\n\n"
+                full_response_text += cleaned_chunk
+    except Exception as e:
+        logger.error(f"Error during chat streaming for session_id: {session_id}: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Error during streaming: {e}'})}\n\n"
+    finally:
+        # Ensure the queue is cleared and the thread is properly shut down if needed
+        logger.info(f"Stream finished for session_id: {session_id}. Total response length: {len(full_response_text)}")
+        if full_response_text:
+            chat_cache.set(cache_key, full_response_text)
+        
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        # Log performance for analytics
+        analytics.log_request(model, count_tokens(full_response_text), is_error=False)
+        
+        # Final event
+        yield f"data: {json.dumps({'type': 'end', 'content': 'Stream finished', 'duration': duration})}\n\n"
 
-                    with httpx.stream(
-                        "POST",
-                        pollinations_url,
-                        json=pollinations_payload,
-                        timeout=60.0
-                    ) as response:
-                        logger.info(f"Pollinations Response Status: {response.status_code}")
-                        # Explicitly read the response body if status is not 2xx to prevent StreamConsumed error
-                        if not response.is_success:
-                            response.read()
-                        response.raise_for_status() # Raise an exception for 4xx/5xx responses
+async def fetch_chunks_async(
+    messages: List[Dict[str, str]],
+    model: str,
+    web_search: bool,
+    personality_name: str,
+    image_data: Optional[str],
+    force_roulette: bool,
+    session_id: str
+) -> AsyncGenerator[str, None]:
+    logger.info(f"fetch_chunks_async started for session_id: {session_id}")
+    
+    try:
+        # Primary: Try g4f Client first
+        selected_g4f_provider = get_best_g4f_provider()
+        if not selected_g4f_provider:
+            logger.warning("No suitable g4f provider found, falling back to Pollinations AI.")
+        else:
+            try:
+                logger.info(f"Using g4f Client with provider: {selected_g4f_provider.__name__} for model: {model}")
+                g4f_client = Client(provider=selected_g4f_provider)
+                logger.info(f"Attempting g4f chat completion with provider: {selected_g4f_provider.__name__}")
+                
+                provider_name_str = selected_g4f_provider.__name__
+                start_time_g4f = time.perf_counter()
+
+                response = await g4f_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    stream=True
+                )
+                for chunk in response:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        logger.debug(f"g4f AI: Yielding content: {content[:50]}...")
+                        yield content
+                
+                end_time_g4f = time.perf_counter()
+                latency = end_time_g4f - start_time_g4f
+                if provider_name_str in g4f_provider_performance:
+                    g4f_provider_performance[provider_name_str]["success_count"] += 1
+                    g4f_provider_performance[provider_name_str]["total_latency"] += latency
+                    g4f_provider_performance[provider_name_str]["last_used_time"] = end_time_g4f
+                    g4f_provider_performance[provider_name_str]["consecutive_failures"] = 0
+                logger.info(f"g4f call with {provider_name_str} successful in {latency:.4f} seconds.")
+                yield None # Signal end of stream
+                return
+
+            except Exception as g4f_e:
+                end_time_g4f = time.perf_counter()
+                latency = end_time_g4f - start_time_g4f
+                if provider_name_str in g4f_provider_performance:
+                    g4f_provider_performance[provider_name_str]["failure_count"] += 1
+                    g4f_provider_performance[provider_name_str]["last_failure_time"] = end_time_g4f
+                    g4f_provider_performance[provider_name_str]["consecutive_failures"] += 1
+                logger.error(f"g4f call with {provider_name_str} failed after {latency:.4f} seconds: {g4f_e}", exc_info=True)
+                logger.info("g4f failed, falling back to Pollinations AI")
+
+        # Fallback: Use Pollinations AI
+        logger.info(f"Using Pollinations AI as fallback for session_id: {session_id}")
+        try:
+            start_time_pollinations = time.perf_counter()
+            logger.info(f"Entering Pollinations AI call for session_id: {session_id}")
+            
+            # Direct Pollinations API call
+            pollinations_url = "https://text.pollinations.ai/openai"
+            pollinations_payload = {
+                "messages": messages,
+                "model": "openai",
+                "stream": True
+            }
+            
+            logger.info(f"Making direct Pollinations AI request: {pollinations_url}")
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream(
+                    "POST",
+                    pollinations_url,
+                    json=pollinations_payload
+                ) as response:
+                    logger.info(f"Pollinations Response Status: {response.status_code}")
+                    if response.is_success:
                         buffer = b""
-                        for chunk in response.iter_bytes(): # Synchronous iteration
+                        async for chunk in response.aiter_bytes():
                             buffer += chunk
                             while b"\n" in buffer:
                                 line, buffer = buffer.split(b"\n", 1)
                                 line = line.decode("utf-8").strip()
                                 if line.startswith("data: "):
                                     data_str = line[6:]
-                                    if data_str == "[DONE]": break
+                                    if data_str == "[DONE]": 
+                                        break
                                     try:
                                         chunk_data = json.loads(data_str)
                                         content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                         if content:
-                                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                                            logger.debug(f"Pollinations AI: Yielding content: {content[:50]}...")
+                                            yield content
                                     except json.JSONDecodeError:
-                                        logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
                                         continue
                                     except Exception as chunk_e:
-                                        logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
+                                        logger.error(f"Error processing Pollinations chunk: {chunk_e}")
                                         continue
-                        # Process any remaining data in the buffer
+                        
+                        # Process remaining buffer
                         if buffer.strip():
                             line = buffer.decode("utf-8").strip()
                             if line.startswith("data: "):
@@ -398,114 +575,30 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                                         chunk_data = json.loads(data_str)
                                         content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                                         if content:
-                                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                                            yield content
                                     except json.JSONDecodeError:
-                                        logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
+                                        pass
                                     except Exception as chunk_e:
-                                        logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
-                    return 
-                except httpx.HTTPStatusError as http_error:
-                    response_body_text = ""
-                    try:
-                        # Explicitly read the response body to avoid "Attempted to access streaming response content, without having called `read()`"
-                        response_body_text = http_error.response.read().decode("utf-8") # Synchronously read and decode the response body
-                    except Exception as read_error:
-                        logger.warning(f"Error reading response body in HTTPStatusError handler: {read_error}")
-                    logger.error(f"Pollinations direct layer HTTP error: {http_error.response.status_code} - {response_body_text}")
-                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI HTTP Error: {http_error.response.status_code} - {response_body_text}"))
-                except httpx.RequestError as req_error:
-                    logger.error(f"Pollinations direct layer request error: {req_error}")
-                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI Request Error: {req_error}"))
-                except Exception as pe:
-                    logger.error(f"Pollinations direct layer general error: {pe}", exc_info=True)
-                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI General Error: {pe}"))
+                                        logger.error(f"Error processing final Pollinations chunk: {chunk_e}")
+                    else:
+                        response_body = await response.aread()
+                        logger.error(f"Pollinations AI failed with status {response.status_code}: {response_body.decode()}")
+                        raise Exception(f"Pollinations AI HTTP error: {response.status_code}")
 
-            # Fallback to g4f Client
-            logger.info(f"Using g4f Client for {model}")
-            g4f_client = Client()
-            response = g4f_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=True
-            )
+            end_time_pollinations = time.perf_counter()
+            duration_pollinations = end_time_pollinations - start_time_pollinations
+            logger.info(f"Pollinations AI call completed in {duration_pollinations:.4f} seconds.")
+            yield None # Signal end of stream
+            return
             
-            for chunk in response:
-                content = ""
-                if hasattr(chunk, 'choices') and chunk.choices:
-                    content = chunk.choices[0].delta.content or ""
-                elif isinstance(chunk, dict):
-                    content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                elif isinstance(chunk, str):
-                    content = chunk
-                
-                if content:
-                    loop.call_soon_threadsafe(queue.put_nowait, content)
-                    
-        except Exception as e:
-            logger.error(f"Critical error in fetch_chunks_sync: {e}")
-            loop.call_soon_threadsafe(queue.put_nowait, Exception(f"DUB5 Error: {str(e)}"))
-        finally:
-            loop.call_soon_threadsafe(queue.put_nowait, None)
+        except Exception as pollinations_e:
+            logger.error(f"Pollinations AI fallback failed: {pollinations_e}", exc_info=True)
+            yield Exception(f"Both g4f and Pollinations AI failed. Last error: {pollinations_e}")
+            return
 
-    # Start the fetcher in a separate thread
-    loop = asyncio.get_running_loop()
-    executor.submit(fetch_chunks_sync, loop, queue)
-
-    try:
-        stream_buffer = ""
-        while True:
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                logger.warning("Queue get timeout in stream_chat_completion")
-                break
-                
-            if item is None: break
-            if isinstance(item, Exception): raise item
-            
-            # If it's a heartbeat/metadata from the fetcher (though rare in this setup)
-            if isinstance(item, str) and item.startswith("data:"):
-                yield item
-                continue
-
-            stream_buffer += item
-            
-            # Sliding window logic for watermark removal
-            cleaned_buffer = clean_text(stream_buffer)
-            
-            # Reduced lookahead for faster response
-            lookahead = 20
-            if len(cleaned_buffer) > lookahead:
-                safe_to_send = cleaned_buffer[:-lookahead]
-                stream_buffer = cleaned_buffer[-lookahead:]
-                
-                if safe_to_send:
-                    full_response_text += safe_to_send
-                    yield f"data: {json.dumps({'content': safe_to_send})}\n\n"
-            
-        # Final cleanup and send remaining buffer
-        if stream_buffer:
-            final_segment = clean_text(stream_buffer)
-            if final_segment:
-                full_response_text += final_segment
-                yield f"data: {json.dumps({'content': final_segment})}\n\n"
-
-        # Final processing
-        full_response_text = final_clean_text(full_response_text)
-        if full_response_text:
-            chat_cache.set(cache_key, f"data: {json.dumps({'content': full_response_text})}\n\n")
-
-        file_actions = parse_multi_file_response(full_response_text)
-        if personality_name == "coder" and file_actions:
-            for file in file_actions:
-                project_manager.update_file(session_id, file.path, file.content)
-            logger.info(f"Updated project state for session {session_id}")
-
-        yield f"data: {json.dumps({'type': 'done', 'files': [f.to_dict() for f in file_actions] if file_actions else None})}\n\n"
-        
     except Exception as e:
-        logger.error(f"Streaming error: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        logger.error(f"Error in fetch_chunks_async for session_id: {session_id}: {e}", exc_info=True)
+        yield Exception(f"Streaming error: {e}")
 
 # ---- Main chat API endpoint ----
 @app.post("/api/chatbot")
