@@ -8,6 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from api.chatbot_backup import stream_chat_completion
+from api.models import DEFAULT_MODEL, MODELS
+from api.thinking_modes import THINKING_MODES
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -31,17 +34,7 @@ async def get_chatbot_html():
         return HTMLResponse(content=f.read())
 
 # Configuration
-DEFAULT_MODEL = "openai"
-MODELS = {
-    "gpt-4o": "openai",
-    "gpt-4o-mini": "openai",
-    "mistral": "mistral",
-    "llama": "llama",
-    "search": "search",
-    "claude-3-haiku": "openai", # Fallback to openai for haiku
-    "deepseek": "deepseek",
-    "flux": "flux" # Image model
-}
+
 
 # Specialized prompts
 BUILDER_SYSTEM_PROMPT = """You are DUB5, an AI editor that creates and modifies web applications. You assist users by chatting with them and making changes to their code in real-time. You can add images to the project using pollinations ai image url generating functionality, and you can use them in your responses.
@@ -88,12 +81,7 @@ PERSONALITIES = {
     "writer": "You are DUB5 AI, a creative writer and storyteller."
 }
 
-THINKING_MODES = {
-    "balanced": {"model": "openai", "system_add": ""},
-    "concise": {"model": "openai", "system_add": " Be extremely concise."},
-    "reason": {"model": "mistral", "system_add": " Use step-by-step reasoning."},
-    "deep": {"model": "llama", "system_add": " Provide deep, detailed analysis."}
-}
+
 
 async def ddg_search(query: str):
     url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_redirect=1&no_html=1"
@@ -134,7 +122,7 @@ async def fetch_readable(url: str):
     return txt[:3000]
 
 @app.post("/api/chatbot")
-async def chatbot_simple(request: Request):
+async def chatbot_response(request: Request):
     try:
         body = await request.json()
         user_input = body.get("input", "")
@@ -142,27 +130,53 @@ async def chatbot_simple(request: Request):
         model_alias = body.get("model", "gpt-4o")
         mode = body.get("thinking_mode", "balanced")
         personality = body.get("personality", "general")
-        
+        custom_system_prompt = body.get("custom_system_prompt")
+        force_roulette = body.get("force_roulette", False)
+        files = body.get("files", [])
+        image_data = body.get("image")
+        session_id = body.get("session_id", "default")
+        library_ids = body.get("library_ids", [])
+
         # Base system prompt
         system_prompt = PERSONALITIES.get(personality, PERSONALITIES["general"])
-        
+
         # Determine model
         if mode in THINKING_MODES:
             model = THINKING_MODES[mode]["model"]
             system_prompt += THINKING_MODES[mode]["system_add"]
         else:
             model = MODELS.get(model_alias, DEFAULT_MODEL)
-        
+
+        # If custom_system_prompt is provided, it overrides the personality prompt
+        if custom_system_prompt:
+            system_prompt = custom_system_prompt
+
         # Image capability
         if "![" not in system_prompt:
             system_prompt += " You can generate images with: ![Image](https://image.pollinations.ai/prompt/DESCRIPTION?width=1024&height=1024&nologo=true)."
 
-        # Context construction
-        full_prompt = ""
-        context_msgs = history[-8:] if history else []
+        # Construct messages for the AI
+        messages = [{"role": "system", "content": system_prompt}]
+        for msg in history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": user_input})
+
+        # Call the stream_chat_completion function
+        return StreamingResponse(
+            stream_chat_completion(
+                messages=messages,
+                model=model,
+                web_search=False, # Assuming web_search is not directly controlled by this endpoint yet
+                personality_name=personality,
+                image_data=image_data,
+                force_roulette=force_roulette,
+                session_id=session_id
+            ),
+            media_type="application/json"
+        )
 
     except Exception as e:
-        logger.error(f"Error in chatbot_simple: {e}", exc_info=True)
+        logger.error(f"Error in chatbot_response: {e}", exc_info=True)
         return StreamingResponse(
             content=iter([json.dumps({"error": str(e)}) + "\n\n"]),
             media_type="application/json"

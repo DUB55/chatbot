@@ -136,14 +136,14 @@ try:
 except ImportError:
     from models import AVAILABLE_MODELS, DEFAULT_MODEL, FALLBACK_MODEL, STABLE_PROVIDERS, SEARCH_PROVIDERS
     from thinking_modes import THINKING_MODES, DEFAULT_THINKING_MODE
-    from context_manager import smart_context_manager, count_tokens
-    from personalities import PERSONALITIES, DEFAULT_PERSONALITY
-    from circuit_breaker import get_breaker
-    from file_parser import parse_multi_file_response, extract_clean_text
-    from doc_parser import process_document
-    from knowledge_manager import knowledge_manager
-    from database import db
-    from project_manager import project_manager
+    from .context_manager import smart_context_manager, count_tokens
+    from .personalities import PERSONALITIES, DEFAULT_PERSONALITY
+    from .circuit_breaker import get_breaker
+    from .file_parser import parse_multi_file_response, extract_clean_text
+    from .doc_parser import process_document
+    from .knowledge_manager import knowledge_manager
+    from .database import db
+    from .project_manager import project_manager
 
 # ---- Watermark Filtering ----
 WATERMARK_PATTERNS = [
@@ -364,26 +364,55 @@ async def stream_chat_completion(messages, model, web_search=False, personality_
                         timeout=60.0
                     ) as response:
                         logger.info(f"Pollinations Response Status: {response.status_code}")
+                        # Explicitly read the response body if status is not 2xx to prevent StreamConsumed error
+                        if not response.is_success:
+                            response.read()
                         response.raise_for_status() # Raise an exception for 4xx/5xx responses
-                        for line in response.iter_lines():
+                        buffer = b""
+                        for chunk in response.iter_bytes(): # Synchronous iteration
+                            buffer += chunk
+                            while b"\n" in buffer:
+                                line, buffer = buffer.split(b"\n", 1)
+                                line = line.decode("utf-8").strip()
+                                if line.startswith("data: "):
+                                    data_str = line[6:]
+                                    if data_str == "[DONE]": break
+                                    try:
+                                        chunk_data = json.loads(data_str)
+                                        content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                        if content:
+                                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
+                                        continue
+                                    except Exception as chunk_e:
+                                        logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
+                                        continue
+                        # Process any remaining data in the buffer
+                        if buffer.strip():
+                            line = buffer.decode("utf-8").strip()
                             if line.startswith("data: "):
                                 data_str = line[6:]
-                                if data_str == "[DONE]": break
-                                try:
-                                    chunk_data = json.loads(data_str)
-                                    content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                    if content:
-                                        loop.call_soon_threadsafe(queue.put_nowait, content)
-                                except json.JSONDecodeError:
-                                    logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
-                                    continue
-                                except Exception as chunk_e:
-                                    logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
-                                    continue
+                                if data_str != "[DONE]":
+                                    try:
+                                        chunk_data = json.loads(data_str)
+                                        content = chunk_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                        if content:
+                                            loop.call_soon_threadsafe(queue.put_nowait, content)
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Failed to decode JSON from Pollinations stream: {data_str}")
+                                    except Exception as chunk_e:
+                                        logger.error(f"Error processing Pollinations chunk: {chunk_e}, Data: {data_str}")
                     return 
                 except httpx.HTTPStatusError as http_error:
-                    logger.error(f"Pollinations direct layer HTTP error: {http_error.response.status_code} - {http_error.response.text}")
-                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI HTTP Error: {http_error.response.status_code}"))
+                    response_body_text = ""
+                    try:
+                        # Explicitly read the response body to avoid "Attempted to access streaming response content, without having called `read()`"
+                        response_body_text = http_error.response.read().decode("utf-8") # Synchronously read and decode the response body
+                    except Exception as read_error:
+                        logger.warning(f"Error reading response body in HTTPStatusError handler: {read_error}")
+                    logger.error(f"Pollinations direct layer HTTP error: {http_error.response.status_code} - {response_body_text}")
+                    loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI HTTP Error: {http_error.response.status_code} - {response_body_text}"))
                 except httpx.RequestError as req_error:
                     logger.error(f"Pollinations direct layer request error: {req_error}")
                     loop.call_soon_threadsafe(queue.put_nowait, Exception(f"Pollinations AI Request Error: {req_error}"))
