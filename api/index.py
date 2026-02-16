@@ -27,12 +27,19 @@ app.add_middleware(
 )
 
 # Serve static files (CSS, JS, etc.)
-app.mount("/static", StaticFiles(directory="."), name="static")
+app.mount("/static", StaticFiles(directory="public"), name="static")
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": "2025-02-16T02:59:00Z", "version": "1.0.0"}
 
 @app.get("/")
 async def get_chatbot_html():
-    with open("chatbot.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+    try:
+        with open("public/chatbot.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Chatbot interface not found. Please check deployment.</h1>", status_code=404)
 
 # Configuration
 
