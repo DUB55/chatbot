@@ -1,4 +1,40 @@
 import os
+from dataclasses import dataclass
+
+
+@dataclass
+class ServerlessConfig:
+    """
+    Configuration for serverless deployment.
+    
+    This dataclass encapsulates environment-specific settings for running
+    the application in both Vercel serverless and local development environments.
+    """
+    is_vercel: bool
+    root_path: str
+    cache_dir: str
+    max_duration: int = 60
+    memory_mb: int = 1024
+    python_version: str = "3.9"
+    
+    @classmethod
+    def from_environment(cls) -> 'ServerlessConfig':
+        """
+        Creates configuration from environment variables.
+        
+        Detects the runtime environment and returns appropriate configuration
+        values for Vercel serverless or local development.
+        
+        Returns:
+            ServerlessConfig: Configuration instance with environment-specific settings
+        """
+        is_vercel = os.environ.get("VERCEL") is not None
+        return cls(
+            is_vercel=is_vercel,
+            root_path="/api" if is_vercel else "",
+            cache_dir="/tmp/.g4f_cache" if is_vercel else ".g4f_cache",
+        )
+
 
 class Config:
     DUB5_SYSTEM_PROMPT = os.environ.get(

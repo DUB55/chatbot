@@ -2,6 +2,10 @@ import requests
 import json
 import time
 import sys
+import pytest
+
+# Mark this as a manual test that should be skipped by default
+pytestmark = pytest.mark.skip(reason="Manual integration test - requires running server")
 
 def test_personality(name, input_text, url="http://localhost:8000/api/chatbot"):
     payload = {

@@ -4,19 +4,66 @@ import httpx
 import urllib.parse
 import asyncio
 import re
+import time
+import sys
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from api.models import DEFAULT_MODEL, MODELS
-from api.thinking_modes import THINKING_MODES
-from api.config import Config
-from api.chatbot_backup import stream_chat_completion
+
+# Track initialization start time
+_init_start_time = time.time()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(root_path="")
+# Log module initialization start
+logger.info("=" * 60)
+logger.info("Starting DUB5 Chatbot initialization")
+logger.info(f"Python version: {sys.version}")
+logger.info(f"Environment: {'Vercel' if 'VERCEL' in sys.modules else 'Local'}")
+
+# Track module imports with timing
+_module_load_times = {}
+
+def _log_module_import(module_name: str, start_time: float):
+    """Helper to log module import timing"""
+    load_time = (time.time() - start_time) * 1000  # Convert to ms
+    _module_load_times[module_name] = load_time
+    logger.info(f"Loaded {module_name} in {load_time:.2f}ms")
+
+# Import core modules with timing
+_t = time.time()
+from api.models import DEFAULT_MODEL, MODELS
+_log_module_import("api.models", _t)
+
+_t = time.time()
+from api.thinking_modes import THINKING_MODES
+_log_module_import("api.thinking_modes", _t)
+
+_t = time.time()
+from api.config import Config
+_log_module_import("api.config", _t)
+
+_t = time.time()
+from api.chatbot_backup import stream_chat_completion
+_log_module_import("api.chatbot_backup", _t)
+
+_t = time.time()
+from api.environment import Environment
+_log_module_import("api.environment", _t)
+
+_t = time.time()
+from api.error_handler import (
+    log_error,
+    create_error_response,
+    handle_ai_provider_error
+)
+_log_module_import("api.error_handler", _t)
+
+# Detect environment and configure root path
+root_path = Environment.get_root_path()
+app = FastAPI(root_path=root_path)
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,20 +73,98 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files (CSS, JS, etc.)
-app.mount("/static", StaticFiles(directory="public"), name="static")
+# Conditionally mount static files only when not running on Vercel
+# In Vercel, static files are served through vercel.json routing configuration
+if not Environment.is_vercel():
+    logger.info("Local environment detected: mounting static files")
+    app.mount("/static", StaticFiles(directory="public"), name="static")
+else:
+    logger.info("Vercel environment detected: static files will be served through Vercel routing")
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": "2025-02-16T02:59:00Z", "version": "1.0.0"}
+# Log initialization completion with performance metrics
+_init_end_time = time.time()
+_total_init_time = (_init_end_time - _init_start_time) * 1000  # Convert to ms
+
+logger.info("=" * 60)
+logger.info("DUB5 Chatbot initialization complete")
+logger.info(f"Total initialization time: {_total_init_time:.2f}ms")
+logger.info(f"Loaded {len(_module_load_times)} modules:")
+for module, load_time in _module_load_times.items():
+    logger.info(f"  - {module}: {load_time:.2f}ms")
+logger.info(f"Root path: {root_path}")
+logger.info(f"Static files: {'mounted locally' if not Environment.is_vercel() else 'served via Vercel'}")
+logger.info("=" * 60)
+
+# Performance warning for cold starts
+if _total_init_time > 10000:  # 10 seconds
+    logger.warning(f"Cold start exceeded 10 seconds: {_total_init_time:.2f}ms")
+elif _total_init_time > 5000:  # 5 seconds
+    logger.info(f"Cold start time acceptable: {_total_init_time:.2f}ms")
+else:
+    logger.info(f"Cold start time optimal: {_total_init_time:.2f}ms")
 
 @app.get("/")
 async def get_chatbot_html():
+    """
+    Serves the main chatbot HTML interface.
+    Reads directly from public/chatbot.html with proper error handling.
+    """
     try:
         with open("public/chatbot.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>Chatbot interface not found. Please check deployment.</h1>", status_code=404)
+            content = f.read()
+            return HTMLResponse(content=content)
+    except FileNotFoundError as e:
+        log_error(
+            error_type="file",
+            message="Chatbot HTML file not found at public/chatbot.html",
+            exception=e,
+            context={"file_path": "public/chatbot.html", "operation": "read"}
+        )
+        error_response = create_error_response(
+            error_code="FILE_NOT_FOUND",
+            message="Chatbot interface not found",
+            details="The chatbot.html file is missing. Please check deployment."
+        )
+        return JSONResponse(content=error_response, status_code=404)
+    except PermissionError as e:
+        log_error(
+            error_type="file",
+            message="Permission denied reading chatbot.html",
+            exception=e,
+            context={"file_path": "public/chatbot.html", "operation": "read"}
+        )
+        error_response = create_error_response(
+            error_code="PERMISSION_DENIED",
+            message="Unable to access chatbot interface",
+            details="Permission denied reading chatbot.html"
+        )
+        return JSONResponse(content=error_response, status_code=500)
+    except UnicodeDecodeError as e:
+        log_error(
+            error_type="file",
+            message="Encoding error reading chatbot.html",
+            exception=e,
+            context={"file_path": "public/chatbot.html", "operation": "read"}
+        )
+        error_response = create_error_response(
+            error_code="ENCODING_ERROR",
+            message="Unable to read chatbot interface",
+            details="Encoding error reading chatbot.html"
+        )
+        return JSONResponse(content=error_response, status_code=500)
+    except Exception as e:
+        log_error(
+            error_type="file",
+            message="Unexpected error reading chatbot.html",
+            exception=e,
+            context={"file_path": "public/chatbot.html", "operation": "read"}
+        )
+        error_response = create_error_response(
+            error_code="INTERNAL_ERROR",
+            message="An unexpected error occurred",
+            details="Unexpected error while loading the chatbot interface"
+        )
+        return JSONResponse(content=error_response, status_code=500)
 
 # Configuration
 
@@ -131,6 +256,10 @@ async def fetch_readable(url: str):
 
 @app.post("/api/chatbot")
 async def chatbot_response(request: Request):
+    """
+    Main chatbot endpoint that handles user messages and streams AI responses.
+    Includes comprehensive error handling for all failure modes.
+    """
     try:
         body = await request.json()
         user_input = body.get("input", "")
@@ -183,72 +312,161 @@ async def chatbot_response(request: Request):
             media_type="application/json"
         )
 
+    except json.JSONDecodeError as e:
+        log_error(
+            error_type="request",
+            message="Invalid JSON in request body",
+            exception=e,
+            context={"endpoint": "/api/chatbot"}
+        )
+        error_response = create_error_response(
+            error_code="INVALID_JSON",
+            message="Invalid request format",
+            details="Request body must be valid JSON"
+        )
+        return JSONResponse(content=error_response, status_code=400)
+    
+    except KeyError as e:
+        log_error(
+            error_type="request",
+            message="Missing required field in request",
+            exception=e,
+            context={"endpoint": "/api/chatbot"}
+        )
+        error_response = create_error_response(
+            error_code="MISSING_FIELD",
+            message="Missing required field in request",
+            details=f"Required field missing: {str(e)}"
+        )
+        return JSONResponse(content=error_response, status_code=400)
+    
     except Exception as e:
-        logger.error(f"Error in chatbot_response: {e}", exc_info=True)
+        log_error(
+            error_type="chatbot",
+            message="Error in chatbot_response endpoint",
+            exception=e,
+            context={"endpoint": "/api/chatbot"}
+        )
+        error_response = create_error_response(
+            error_code="INTERNAL_ERROR",
+            message="An error occurred processing your request",
+            details=str(e),
+            retry_after=5
+        )
+        # Return as streaming response to match expected format
+        async def error_stream():
+            yield f"data: {json.dumps(error_response)}\n\n"
+        
         return StreamingResponse(
-            content=iter([json.dumps({"error": str(e)}) + "\n\n"]),
+            error_stream(),
             media_type="application/json"
         )
 
 @app.get("/health")
 async def health_check():
-    health_status = {
-        "pollinations_ai": {"status": "unknown", "error": None},
-        "g4f_ai": {"status": "unknown", "error": None}
-    }
+    """
+    Health check endpoint that tests both AI backends.
+    Always returns HTTP 200 with status details in response body.
+    Includes 10-second timeout protection to prevent hanging.
+    """
+    async def check_backend(backend_name: str, force_roulette: bool, personality: str):
+        """Helper function to check a single backend with timeout protection."""
+        try:
+            test_messages = [{"role": "user", "content": "Hello"}]
+            test_response_generator = stream_chat_completion(
+                messages=test_messages,
+                model="gpt-4o",
+                web_search=False,
+                personality_name=personality,
+                image_data=None,
+                force_roulette=force_roulette,
+                session_id=f"health_check_{backend_name}"
+            )
+            # Consume the generator to trigger the call and check for any content
+            async for chunk in test_response_generator:
+                if chunk.strip() and not chunk.startswith(":"): # Ignore heartbeats
+                    data = json.loads(chunk.replace("data: ", ""))
+                    if data.get("content"): # Check if any content is received
+                        return {"status": "healthy", "error": None}
+            return {"status": "unresponsive", "error": None}
 
-    # Test Pollinations AI path (coder personality)
+        except asyncio.TimeoutError:
+            return {"status": "unhealthy", "error": "Health check timeout"}
+        except Exception as e:
+            log_error(
+                error_type="health_check",
+                message=f"Health check failed for {backend_name}",
+                exception=e,
+                context={"provider": backend_name}
+            )
+            return {"status": "unhealthy", "error": str(e)}
+
     try:
-        test_messages = [{"role": "user", "content": "Hello"}]
-        test_response_generator = stream_chat_completion(
-            messages=test_messages,
-            model="gpt-4o",
-            web_search=False,
-            personality_name="coder",
-            image_data=None,
-            force_roulette=False,
-            session_id="health_check_pollinations"
-        )
-        # Consume the generator to trigger the call and check for any content
-        async for chunk in test_response_generator:
-            if chunk.strip() and not chunk.startswith(":"): # Ignore heartbeats
-                data = json.loads(chunk.replace("data: ", ""))
-                if data.get("content"): # Check if any content is received
-                    health_status["pollinations_ai"]["status"] = "healthy"
-                    break
-        if health_status["pollinations_ai"]["status"] == "unknown":
-            health_status["pollinations_ai"]["status"] = "unresponsive"
+        health_status = {
+            "pollinations_ai": {"status": "unknown", "error": None},
+            "g4f_ai": {"status": "unknown", "error": None}
+        }
 
-    except Exception as e:
-        logger.error(f"Health check failed for Pollinations AI: {e}", exc_info=True)
-        health_status["pollinations_ai"]["status"] = "unhealthy"
-        health_status["pollinations_ai"]["error"] = str(e)
+        # Test Pollinations AI path with 5-second timeout per backend
+        try:
+            health_status["pollinations_ai"] = await asyncio.wait_for(
+                check_backend("pollinations_ai", False, "coder"),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            health_status["pollinations_ai"] = {
+                "status": "unhealthy",
+                "error": "Health check timeout (5s)"
+            }
+        except Exception as e:
+            log_error(
+                error_type="health_check",
+                message="Unexpected error checking Pollinations AI",
+                exception=e,
+                context={"provider": "pollinations_ai"}
+            )
+            health_status["pollinations_ai"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
 
-    # Test g4f AI path (force roulette to bypass Pollinations if it's up)
-    try:
-        test_messages = [{"role": "user", "content": "Hello"}]
-        test_response_generator = stream_chat_completion(
-            messages=test_messages,
-            model="gpt-4o",
-            web_search=False,
-            personality_name="general", # Use general to ensure g4f path
-            image_data=None,
-            force_roulette=True, # Force g4f path
-            session_id="health_check_g4f"
-        )
-        # Consume the generator to trigger the call and check for any content
-        async for chunk in test_response_generator:
-            if chunk.strip() and not chunk.startswith(":"): # Ignore heartbeats
-                data = json.loads(chunk.replace("data: ", ""))
-                if data.get("content"): # Check if any content is received
-                    health_status["g4f_ai"]["status"] = "healthy"
-                    break
-        if health_status["g4f_ai"]["status"] == "unknown":
-            health_status["g4f_ai"]["status"] = "unresponsive"
-
-    except Exception as e:
-        logger.error(f"Health check failed for g4f AI: {e}", exc_info=True)
-        health_status["g4f_ai"]["status"] = "unhealthy"
-        health_status["g4f_ai"]["error"] = str(e)
+        # Test g4f AI path with 5-second timeout per backend
+        try:
+            health_status["g4f_ai"] = await asyncio.wait_for(
+                check_backend("g4f_ai", True, "general"),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            health_status["g4f_ai"] = {
+                "status": "unhealthy",
+                "error": "Health check timeout (5s)"
+            }
+        except Exception as e:
+            log_error(
+                error_type="health_check",
+                message="Unexpected error checking g4f AI",
+                exception=e,
+                context={"provider": "g4f_ai"}
+            )
+            health_status["g4f_ai"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+        
+        # Always return 200 status with health details in body
+        return JSONResponse(content=health_status, status_code=200)
     
-    return health_status
+    except Exception as e:
+        # Even if the health check itself fails, return 200 with error details
+        log_error(
+            error_type="health_check",
+            message="Unexpected error in health check endpoint",
+            exception=e,
+            context={"endpoint": "/health"}
+        )
+        error_response = {
+            "pollinations_ai": {"status": "unknown", "error": "Health check failed"},
+            "g4f_ai": {"status": "unknown", "error": "Health check failed"},
+            "error": str(e)
+        }
+        return JSONResponse(content=error_response, status_code=200)
