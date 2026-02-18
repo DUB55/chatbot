@@ -2,15 +2,15 @@
   "routes": [
     {
       "src": "/test",
-      "dest": "/api/test.py"
+      "dest": "/api/test"
     },
     {
       "src": "/health",
-      "dest": "/api/simple.py"
+      "dest": "/api/simple"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/simple.py"
+      "dest": "/api/simple"
     },
     {
       "src": "/(.*)",
