@@ -12,16 +12,8 @@
       "dest": "/api/index.py"
     },
     {
-      "src": "/",
-      "dest": "/api/index.py"
-    },
-    {
-      "src": "/(.*\\.(html|css|js|json|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
-      "dest": "/public/$1"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/api/index.py"
+      "dest": "/public/$1"
     }
   ],
   "functions": {
