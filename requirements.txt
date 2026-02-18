@@ -1,9 +1,8 @@
-fastapi
-uvicorn
-httpx
-pydantic
-python-multipart
-tenacity
-pybreaker
-nest-asyncio
-g4f
+fastapi==0.104.1
+uvicorn==0.41.0
+httpx==0.28.1
+pydantic==2.12.5
+python-multipart==0.0.22
+tenacity==9.1.4
+nest-asyncio==1.6.0
+g4f==7.1.2
