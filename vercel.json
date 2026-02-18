@@ -5,12 +5,16 @@
       "dest": "/api/test.py"
     },
     {
+      "src": "/api/chatbot",
+      "dest": "/api/chatbot.py"
+    },
+    {
       "src": "/health",
-      "dest": "/api/simple.py"
+      "dest": "/api/test.py"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/simple.py"
+      "dest": "/api/chatbot.py"
     },
     {
       "src": "/(.*)",
