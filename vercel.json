@@ -1,16 +1,21 @@
 {
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.9"
+    }
+  },
   "routes": [
     {
       "src": "/test",
-      "dest": "/api/test"
+      "dest": "/api/test.py"
     },
     {
       "src": "/health",
-      "dest": "/api/simple"
+      "dest": "/api/simple.py"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/simple"
+      "dest": "/api/simple.py"
     },
     {
       "src": "/(.*)",
