@@ -1,6 +1,14 @@
 {
   "routes": [
     {
+      "src": "/health",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/debug",
+      "dest": "/api/index.py"
+    },
+    {
       "src": "/api/(.*)",
       "dest": "/api/index.py"
     },
