@@ -2,15 +2,11 @@
   "routes": [
     {
       "src": "/health",
-      "dest": "/api/chatbot.py"
-    },
-    {
-      "src": "/debug",
-      "dest": "/api/chatbot.py"
+      "dest": "/api/simple.py"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/chatbot.py"
+      "dest": "/api/simple.py"
     },
     {
       "src": "/(.*)",
