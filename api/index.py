@@ -24,13 +24,7 @@ app.add_middleware(
 # Serve static files
 app.mount("/static", StaticFiles(directory="public"), name="static")
 
-@app.get("/")
-async def get_chatbot_html():
-    try:
-        with open("public/index.html", "r", encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>Chatbot interface not found</h1>", status_code=404)
+# Root handler removed - let Vercel handle static files
 
 @app.get("/health")
 async def health_check():
