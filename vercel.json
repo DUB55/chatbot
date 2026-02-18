@@ -4,17 +4,9 @@
     {
       "src": "api/index.py",
       "use": "@vercel/python"
-    },
-    {
-      "src": "api/test.py",
-      "use": "@vercel/python"
     }
   ],
   "routes": [
-    {
-      "src": "/api/test",
-      "dest": "/api/test.py"
-    },
     {
       "src": "/api/(.*)",
       "dest": "/api/index.py"
@@ -24,18 +16,6 @@
       "dest": "/public/$1"
     }
   ],
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 60,
-      "memory": 1024,
-      "runtime": "python3.9"
-    },
-    "api/test.py": {
-      "maxDuration": 10,
-      "memory": 512,
-      "runtime": "python3.9"
-    }
-  },
   "env": {
     "PYTHON_VERSION": "3.9"
   }
