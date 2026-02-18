@@ -2,6 +2,10 @@ import logging
 import json
 import httpx
 import asyncio
+import traceback
+import sys
+import os
+import time
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +32,27 @@ app.mount("/static", StaticFiles(directory="public"), name="static")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": "2025-02-18T15:35:00Z", "version": "1.0.0"}
+    return {
+        "status": "healthy", 
+        "timestamp": time.time(), 
+        "version": "1.0.0",
+        "python_version": sys.version,
+        "environment": "vercel"
+    }
+
+@app.get("/debug")
+async def debug_info():
+    return {
+        "python_version": sys.version,
+        "modules": list(sys.modules.keys())[:20],
+        "environment": {
+            "vercel": os.environ.get("VERCEL", "not_set"),
+            "region": os.environ.get("VERCEL_REGION", "not_set"),
+            "env": os.environ.get("VERCEL_ENV", "not_set")
+        },
+        "working_directory": os.getcwd(),
+        "imports_successful": True
+    }
 
 @app.post("/api/chatbot")
 async def chatbot_endpoint(request: Request):
@@ -94,9 +118,20 @@ async def chatbot_endpoint(request: Request):
         return StreamingResponse(generate_response(), media_type="text/plain")
         
     except Exception as e:
-        logger.error(f"Chatbot endpoint error: {e}")
+        error_details = {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "python_version": sys.version,
+            "request_method": request.method,
+            "request_url": str(request.url),
+            "request_headers": dict(request.headers),
+            "timestamp": time.time()
+        }
+        logger.error(f"Chatbot error: {error_details}")
+        
+        # Return detailed error for debugging
         return StreamingResponse(
-            iter([f"data: {json.dumps({'type': 'error', 'content': f'Server error: {str(e)}'})}\n\n"]),
+            iter([f"data: {json.dumps({'type': 'error', 'content': f'Server error: {str(e)}', 'details': error_details})}\n\n"]),
             media_type="text/plain"
         )
 
